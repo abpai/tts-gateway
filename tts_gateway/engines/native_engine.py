@@ -92,6 +92,7 @@ class LazyNativeEngine(TtsEngine):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._load_model)
         self._loaded = True
+        self._load_error = None
         duration_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
           'engine-load-completed',

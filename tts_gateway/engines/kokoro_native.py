@@ -24,6 +24,33 @@ class _KokoroPipeline(Protocol):
   ) -> Iterable[tuple[Any, Any, Any]]: ...
 
 
+class _KokoroModule(Protocol):
+  def KPipeline(  # noqa: N802
+    self,
+    *,
+    lang_code: str,
+    device: str,
+    repo_id: str,
+  ) -> _KokoroPipeline: ...
+
+
+class _TorchMpsBackend(Protocol):
+  def is_available(self) -> bool: ...
+
+
+class _TorchBackends(Protocol):
+  mps: _TorchMpsBackend
+
+
+class _TorchCuda(Protocol):
+  def is_available(self) -> bool: ...
+
+
+class _TorchModule(Protocol):
+  cuda: _TorchCuda
+  backends: _TorchBackends
+
+
 class KokoroNativeEngine(LazyNativeEngine):
   """Native in-process Kokoro TTS engine using the ``kokoro`` PyTorch package."""
 
@@ -50,14 +77,11 @@ class KokoroNativeEngine(LazyNativeEngine):
     device = self._resolve_device(self.device_mode)
     self._device = device
 
-    kokoro = import_module('kokoro')
-    self._pipeline = cast(
-      _KokoroPipeline,
-      kokoro.KPipeline(
-        lang_code='a',
-        device=device,
-        repo_id=KOKORO_REPO_ID,
-      ),
+    kokoro = cast(_KokoroModule, import_module('kokoro'))
+    self._pipeline = kokoro.KPipeline(
+      lang_code='a',
+      device=device,
+      repo_id=KOKORO_REPO_ID,
     )
 
   def _run_inference(self, text: str, voice: str | None = None) -> AudioChunk:
@@ -88,7 +112,7 @@ class KokoroNativeEngine(LazyNativeEngine):
       return 'cpu'
 
     try:
-      torch = import_module('torch')
+      torch = cast(_TorchModule, import_module('torch'))
 
       if device_mode == 'cuda':
         if torch.cuda.is_available():
