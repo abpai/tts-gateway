@@ -130,6 +130,7 @@ async def test_load_failure_retries_on_next_call() -> None:
   await engine.synthesize('attempt 2')
   assert engine._loaded
   assert engine.load_count == 2
+  assert engine.health_status()['loadError'] is None
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +168,21 @@ async def test_health_status_after_failure() -> None:
   status = engine.health_status()
   assert status['loaded'] is False
   assert status['loadError'] == 'boom'
+
+
+@pytest.mark.asyncio
+async def test_health_status_clears_load_error_after_retry_success() -> None:
+  engine = _FakeNativeEngine(load_raises=RuntimeError('transient'))
+
+  with pytest.raises(EngineError):
+    await engine.synthesize('fail')
+
+  engine._load_raises = None
+  await engine.ensure_loaded()
+
+  status = engine.health_status()
+  assert status['loaded'] is True
+  assert status['loadError'] is None
 
 
 # ---------------------------------------------------------------------------

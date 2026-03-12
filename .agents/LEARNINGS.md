@@ -14,6 +14,7 @@
 
 - Run `uv run pytest`, `uv run ruff check .`, and `uv run ty check` during reviews; this repo can have passing tests while the required typecheck still fails.
 - Keep optional backend imports (`pocket_tts`, similar) behind runtime `import_module()` calls plus local `Protocol` types so `ty check` stays green without installing extras.
+- Clear `LazyNativeEngine._load_error` on successful retries so `/health` and `/warmup` do not report stale failures after recovery.
 - Apply process-wide default voice fallback inside `TtsGateway`, not just the CLI/env layer, so API requests that omit `voice` still honor `TTS_DEFAULT_VOICE`.
 - For readability-only refactors, small helper extractions in `gateway.py` and `audio.py` are low-risk and well-covered by the current test suite plus `ty check`.
 
