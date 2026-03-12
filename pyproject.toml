@@ -1,9 +1,10 @@
 [project]
 name = "tts-gateway"
-version = "0.1.0"
+version = "0.1.1"
 description = "Multi-provider TTS gateway server with engine fallback, text chunking, and audio stitching"
 license = "MIT"
 authors = [{ name = "Andy Pai" }]
+readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.116,<0.117",
@@ -18,6 +19,9 @@ dependencies = [
 kokoro = ["kokoro>=0.9", "torch>=2.10,<2.11"]
 pocket = ["pocket-tts>=0.1", "torch>=2.10,<2.11"]
 all = ["kokoro>=0.9", "pocket-tts>=0.1", "torch>=2.10,<2.11"]
+
+[project.urls]
+Repository = "https://github.com/abpai/tts-gateway"
 
 [project.scripts]
 tts = "tts_gateway.cli:main"
