@@ -2,7 +2,7 @@
 
 A local text-to-speech gateway with a pluggable engine architecture. New open-source voice models ship constantly; tts-gateway gives any client a stable `POST /tts` HTTP endpoint so swapping or adding models means implementing a small engine class, not rewiring your workflow.
 
-Currently supports [Kokoro](https://github.com/hexgrad/kokoro) and [Pocket TTS](https://github.com/nicobailey/pocket-tts). Each engine runs natively in-process.
+Currently supports [Kokoro](https://github.com/hexgrad/kokoro) and [Pocket TTS](https://github.com/kyutai-labs/pocket-tts). Each engine runs natively in-process.
 
 ## Install
 
