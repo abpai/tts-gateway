@@ -9,8 +9,6 @@ from tempfile import TemporaryDirectory
 from tts_gateway.config import OutputFormat
 from tts_gateway.engines.base import AudioChunk
 
-WAV_MIME_TYPES = {'audio/wav', 'audio/wave', 'audio/x-wav'}
-MP3_MIME_TYPES = {'audio/mpeg', 'audio/mp3'}
 SAMPLE_FORMAT_BY_WIDTH = {
   1: 'u8',
   2: 's16',
@@ -61,52 +59,6 @@ def _run_ffmpeg(
 
   stderr = process.stderr.strip() or fallback_error
   raise RuntimeError(f'{error_prefix}: {stderr}')
-
-
-def _ffmpeg_decode_to_wav_bytes(
-  payload: bytes, input_suffix: str, ffmpeg_path: str
-) -> bytes:
-  with TemporaryDirectory(prefix='tts-gateway-decode-') as temp_dir:
-    input_path = Path(temp_dir) / f'input.{input_suffix}'
-    output_path = Path(temp_dir) / 'output.wav'
-    input_path.write_bytes(payload)
-
-    command = [
-      ffmpeg_path,
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-y',
-      '-i',
-      str(input_path),
-      '-f',
-      'wav',
-      str(output_path),
-    ]
-    _run_ffmpeg(
-      command,
-      error_prefix='ffmpeg decode failed',
-      fallback_error='unknown ffmpeg decode error',
-    )
-    return output_path.read_bytes()
-
-
-def _normalized_content_type(content_type: str) -> str:
-  return content_type.split(';', 1)[0].strip().lower()
-
-
-def audio_bytes_to_chunk(
-  payload: bytes, content_type: str, ffmpeg_path: str
-) -> AudioChunk:
-  normalized = _normalized_content_type(content_type)
-  if normalized in WAV_MIME_TYPES:
-    return wav_bytes_to_chunk(payload)
-
-  if normalized in MP3_MIME_TYPES:
-    wav_payload = _ffmpeg_decode_to_wav_bytes(payload, 'mp3', ffmpeg_path)
-    return wav_bytes_to_chunk(wav_payload)
-
-  raise RuntimeError(f'unsupported audio content type: {content_type}')
 
 
 def merge_chunks(chunks: list[AudioChunk]) -> AudioChunk:
