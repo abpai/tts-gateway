@@ -61,7 +61,7 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     config = load_config()
   gateway = TtsGateway(config)
 
-  app = FastAPI(title='TTS Gateway', version='0.1.0')
+  app = FastAPI(title='TTS Gateway', version='0.1.2')
   _configure_warning_filters()
 
   @app.middleware('http')
