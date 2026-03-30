@@ -35,6 +35,35 @@ uv pip install \
 
 For local development, see [Development](#development) below.
 
+## Docker
+
+This repo now publishes a container image to GHCR from GitHub Actions.
+
+```bash
+docker pull ghcr.io/abpai/tts-gateway:latest
+docker run --rm -p 8080:8080 \
+  -e TTS_PRIMARY_ENGINE=kokoro \
+  -e TTS_OUTPUT_FORMAT=mp3 \
+  ghcr.io/abpai/tts-gateway:latest
+```
+
+The published image installs both native engine stacks and the Kokoro spaCy
+model. By default it does not bake model weights into the image, so the first
+`/warmup` or `/tts` request may still download engine weights unless you build a
+preloaded image yourself.
+
+To build a production image with baked model weights:
+
+```bash
+docker build \
+  --build-arg PRELOAD_KOKORO=true \
+  --build-arg PRELOAD_POCKET=false \
+  -t tts-gateway:local .
+```
+
+For `bookmark.bunny`, the intended final-state deployment is to reference the
+published image from Compose rather than vendoring this repo's Python source.
+
 ## Usage
 
 Start the server:

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev setup pre-commit-install pre-commit-run lint format typecheck test clean lock-check run
+.PHONY: help install install-dev setup pre-commit-install pre-commit-run lint format typecheck test clean lock-check run docker-build
 VENV_DIR = .venv
 PROVIDER ?= kokoro
 
@@ -53,3 +53,6 @@ lock-check: ## Ensure uv.lock is up-to-date
 
 run: ## Run the TTS server
 	uv run tts serve --provider $(PROVIDER)
+
+docker-build: ## Build the Docker image locally
+	docker build -t tts-gateway:local .
