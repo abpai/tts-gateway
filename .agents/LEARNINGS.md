@@ -6,6 +6,7 @@
 | ---- | ------ | --------------- | ------------------ |
 | 2026-03-11 | self | Started review in a repo without `.agents/LEARNINGS.md` | Create the project memory file first when it is missing |
 | 2026-03-30 | self | Updated runtime defaults without updating shared test config fixtures | Keep `tests/conftest.py` defaults aligned with `load_config()` so helper-based tests reflect real gateway defaults |
+| 2026-03-30 | self | Planned Bunny final-state deployment without first adding a publishable artifact here | Add Dockerfile, `.dockerignore`, and GHCR publishing in this repo before switching Bunny away from its vendored copy |
 
 ## User Preferences
 
