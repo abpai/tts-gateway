@@ -95,6 +95,8 @@ def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
   assert cfg.pocket_enabled is False
   assert cfg.device_mode == 'auto'
   assert cfg.output_format == 'wav'
+  assert cfg.chunk_max_chars == 3000
+  assert cfg.request_timeout_seconds == 3600
   assert cfg.fallback_engine is None
   assert cfg.default_voice is None
   assert cfg.bind_host == '127.0.0.1'

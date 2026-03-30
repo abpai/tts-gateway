@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
-from typing import TypedDict, Unpack
 from unittest.mock import patch
 
 import pytest
 
-from tts_gateway.config import DeviceMode, EngineName, GatewayConfig, OutputFormat
+from tests.conftest import _make_config
 from tts_gateway.engines.base import AudioChunk, EngineError, TtsEngine
 from tts_gateway.engines.native_engine import LazyNativeEngine
 from tts_gateway.gateway import SynthesisError, TtsGateway
@@ -24,40 +22,6 @@ _DUMMY_CHUNK = AudioChunk(
   channels=1,
   sample_width=2,
 )
-
-_BASE_CONFIG = GatewayConfig(
-  primary_engine='kokoro',
-  fallback_engine=None,
-  output_format='wav',
-  chunk_max_chars=1400,
-  request_timeout_seconds=60,
-  engine_timeout_seconds=30,
-  ffmpeg_path='ffmpeg',
-  kokoro_enabled=True,
-  pocket_enabled=False,
-  device_mode='cpu',
-  models_dir='/tmp/models',
-  default_voice=None,
-  bind_host='127.0.0.1',
-  bind_port=8000,
-)
-
-
-class _ConfigOverrides(TypedDict, total=False):
-  primary_engine: EngineName
-  fallback_engine: EngineName | None
-  output_format: OutputFormat
-  chunk_max_chars: int
-  request_timeout_seconds: int
-  engine_timeout_seconds: int
-  ffmpeg_path: str
-  kokoro_enabled: bool
-  pocket_enabled: bool
-  device_mode: DeviceMode
-  models_dir: str
-  default_voice: str | None
-  bind_host: str
-  bind_port: int
 
 
 class _FailingEngine(TtsEngine):
@@ -90,6 +54,30 @@ class _SlowEngine(TtsEngine):
     return _DUMMY_CHUNK
 
 
+class _StaggeredEngine(TtsEngine):
+  def __init__(self, name: str, delays: dict[str, float]) -> None:
+    self.name = name
+    self._delays = delays
+    self.active_calls = 0
+    self.max_active_calls = 0
+    self.voices: list[str | None] = []
+
+  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+    self.voices.append(voice)
+    self.active_calls += 1
+    self.max_active_calls = max(self.max_active_calls, self.active_calls)
+    try:
+      await asyncio.sleep(self._delays[text])
+      return AudioChunk(
+        pcm_bytes=text.encode('utf-8'),
+        sample_rate=24_000,
+        channels=1,
+        sample_width=2,
+      )
+    finally:
+      self.active_calls -= 1
+
+
 class _WarmupEngine(LazyNativeEngine):
   def __init__(self) -> None:
     super().__init__(
@@ -106,10 +94,6 @@ class _WarmupEngine(LazyNativeEngine):
 
   def _run_inference(self, text: str, voice: str | None = None) -> AudioChunk:
     return _DUMMY_CHUNK
-
-
-def _make_config(**overrides: Unpack[_ConfigOverrides]) -> GatewayConfig:
-  return replace(_BASE_CONFIG, **overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +196,12 @@ def test_engine_info_native_and_disabled() -> None:
   assert info['pocket']['mode'] == 'disabled'
 
 
+def test_chunk_concurrency_uses_cpu_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setattr('tts_gateway.gateway.os.cpu_count', lambda: 8)
+  gw = TtsGateway(_make_config())
+  assert gw.chunk_concurrency() == 4
+
+
 # ---------------------------------------------------------------------------
 # Warmup
 # ---------------------------------------------------------------------------
@@ -286,3 +276,38 @@ async def test_engine_timeout_falls_back() -> None:
   assert 'timed out' in (result.attempts[0].error or '')
   assert result.attempts[1].engine == 'pocket'
   assert result.attempts[1].ok is True
+
+
+@pytest.mark.asyncio
+async def test_audio_chunks_run_concurrently_and_preserve_order() -> None:
+  cfg = _make_config()
+  gw = TtsGateway(cfg)
+  engine = _StaggeredEngine(
+    'kokoro',
+    delays={
+      'chunk-0': 0.05,
+      'chunk-1': 0.0,
+      'chunk-2': 0.02,
+    },
+  )
+  gw.engines['kokoro'] = engine
+  attempts: list = []
+
+  audio_chunks = await gw._synthesize_audio_chunks(
+    ['chunk-0', 'chunk-1', 'chunk-2'],
+    attempts,
+    voice='af_bella',
+  )
+
+  assert engine.max_active_calls >= 2
+  assert engine.voices == ['af_bella', 'af_bella', 'af_bella']
+  assert [chunk.pcm_bytes for chunk in audio_chunks] == [
+    b'chunk-0',
+    b'chunk-1',
+    b'chunk-2',
+  ]
+  assert [(attempt.chunk_index, attempt.engine) for attempt in attempts] == [
+    (0, 'kokoro'),
+    (1, 'kokoro'),
+    (2, 'kokoro'),
+  ]

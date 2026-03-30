@@ -90,6 +90,7 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       'primaryEngine': config.primary_engine,
       'fallbackEngine': config.fallback_engine,
       'outputFormat': config.output_format,
+      'chunkConcurrency': gateway.chunk_concurrency(),
       'chunkMaxChars': config.chunk_max_chars,
       'requestTimeoutSeconds': config.request_timeout_seconds,
       'engineTimeoutSeconds': config.engine_timeout_seconds,

@@ -70,7 +70,7 @@ Pre-load models into memory:
 curl -X POST http://localhost:8000/warmup
 ```
 
-When both a primary and fallback engine are configured, the gateway tries the primary first and falls back on failure. Long texts are chunked automatically and the resulting audio segments are stitched together.
+When both a primary and fallback engine are configured, the gateway tries the primary first and falls back on failure. Long texts are chunked automatically, synthesized concurrently across native chunks, and stitched into one final output file.
 
 ## Running with PM2
 
@@ -113,8 +113,8 @@ All settings can be controlled via environment variables. CLI flags take precede
 | `TTS_MODELS_DIR`              | `~/.cache/tts-gateway/models` | Model storage directory                        |
 | `TTS_GATEWAY_HOST`            | `127.0.0.1`                   | Bind address                                   |
 | `TTS_GATEWAY_PORT`            | `8000`                        | Bind port                                      |
-| `TTS_CHUNK_MAX_CHARS`         | `1400`                        | Max characters per chunk                       |
-| `TTS_REQUEST_TIMEOUT_SECONDS` | `1200`                        | Total request timeout                          |
+| `TTS_CHUNK_MAX_CHARS`         | `3000`                        | Max characters per chunk                       |
+| `TTS_REQUEST_TIMEOUT_SECONDS` | `3600`                        | Total request timeout                          |
 | `TTS_ENGINE_TIMEOUT_SECONDS`  | `360`                         | Per-engine call timeout                        |
 | `TTS_FFMPEG_PATH`             | `ffmpeg`                      | Path to ffmpeg binary (for MP3 encoding)       |
 | `KOKORO_TTS_ENABLED`          | `true`                        | Enable/disable Kokoro engine                   |

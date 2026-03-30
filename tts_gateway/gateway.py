@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -49,6 +50,16 @@ class SynthesisError(RuntimeError):
     self.timed_out = timed_out
 
 
+@dataclass(frozen=True)
+class _ChunkSynthesis:
+  chunk_index: int
+  audio_chunk: AudioChunk
+
+
+def _default_chunk_concurrency() -> int:
+  return max(1, min(4, os.cpu_count() or 1))
+
+
 def _elapsed_ms(started: float) -> int:
   return int((time.perf_counter() - started) * 1000)
 
@@ -82,6 +93,28 @@ def _chunk_failure_message(chunk_index: int, last_error: Exception | None) -> st
   return message
 
 
+def _flatten_attempts(
+  attempts_by_chunk: list[list[EngineAttempt]],
+) -> list[EngineAttempt]:
+  return [attempt for chunk_attempts in attempts_by_chunk for attempt in chunk_attempts]
+
+
+class _AttemptTracker:
+  def __init__(self, attempts: list[EngineAttempt], chunks_total: int) -> None:
+    self._attempts = attempts
+    self._attempts_by_chunk: list[list[EngineAttempt]] = [
+      [] for _ in range(chunks_total)
+    ]
+    self._lock = asyncio.Lock()
+
+  async def store(self, chunk_index: int, chunk_attempts: list[EngineAttempt]) -> None:
+    async with self._lock:
+      self._attempts_by_chunk[chunk_index] = list(chunk_attempts)
+
+  def flush(self) -> None:
+    self._attempts[:] = _flatten_attempts(self._attempts_by_chunk)
+
+
 class TtsGateway:
   def __init__(self, config: GatewayConfig) -> None:
     self.config = config
@@ -102,9 +135,13 @@ class TtsGateway:
     if fallback and fallback != config.primary_engine:
       chain.append(fallback)
     self._engine_chain = chain
+    self._chunk_concurrency = _default_chunk_concurrency()
 
   def engine_chain(self) -> list[str]:
     return self._engine_chain
+
+  def chunk_concurrency(self) -> int:
+    return self._chunk_concurrency
 
   def engine_info(self) -> dict[str, dict]:
     """Per-engine status for /health reporting."""
@@ -238,23 +275,74 @@ class TtsGateway:
     *,
     voice: str | None,
   ) -> list[AudioChunk]:
+    attempt_tracker = _AttemptTracker(attempts, len(chunks))
+    semaphore = asyncio.Semaphore(self._chunk_concurrency)
+    tasks = [
+      asyncio.create_task(
+        self._synthesize_chunk_task(
+          chunk,
+          index,
+          attempt_tracker,
+          semaphore,
+          voice=voice,
+        )
+      )
+      for index, chunk in enumerate(chunks)
+    ]
+    completed_chunks: list[_ChunkSynthesis] = []
+
+    try:
+      for task in asyncio.as_completed(tasks):
+        try:
+          completed_chunks.append(await task)
+        except SynthesisError:
+          raise
+    finally:
+      for pending_task in tasks:
+        if not pending_task.done():
+          pending_task.cancel()
+      await asyncio.gather(*tasks, return_exceptions=True)
+      attempt_tracker.flush()
+
+    completed_chunks.sort(key=lambda item: item.chunk_index)
     audio_chunks: list[AudioChunk] = []
     reference_chunk: AudioChunk | None = None
 
-    for index, chunk in enumerate(chunks):
-      audio_chunk = await self._synthesize_chunk_with_chain(
-        chunk,
-        index,
-        attempts,
-        voice=voice,
-      )
+    for chunk_result in completed_chunks:
       audio_chunks.append(
-        self._align_chunk(audio_chunk, reference_chunk, index, attempts)
+        self._align_chunk(
+          chunk_result.audio_chunk,
+          reference_chunk,
+          chunk_result.chunk_index,
+          attempts,
+        )
       )
       if reference_chunk is None:
-        reference_chunk = audio_chunk
+        reference_chunk = chunk_result.audio_chunk
 
     return audio_chunks
+
+  async def _synthesize_chunk_task(
+    self,
+    text: str,
+    chunk_index: int,
+    attempt_tracker: _AttemptTracker,
+    semaphore: asyncio.Semaphore,
+    *,
+    voice: str | None,
+  ) -> _ChunkSynthesis:
+    chunk_attempts: list[EngineAttempt] = []
+    try:
+      async with semaphore:
+        audio_chunk = await self._synthesize_chunk_with_chain(
+          text,
+          chunk_index,
+          chunk_attempts,
+          voice=voice,
+        )
+      return _ChunkSynthesis(chunk_index=chunk_index, audio_chunk=audio_chunk)
+    finally:
+      await asyncio.shield(attempt_tracker.store(chunk_index, chunk_attempts))
 
   def _build_result(
     self,
