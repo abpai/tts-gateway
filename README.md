@@ -61,6 +61,16 @@ docker build \
   -t tts-gateway:local .
 ```
 
+Verify the container:
+
+```bash
+docker run --rm -d --name tts-gateway-test -p 8080:8080 tts-gateway:local
+docker ps --filter name=tts-gateway-test
+curl http://127.0.0.1:8080/health
+curl -X POST http://127.0.0.1:8080/warmup
+curl -X POST http://127.0.0.1:8080/tts -F 'text=Hello world' -o output.wav
+```
+
 For `bookmark.bunny`, the intended final-state deployment is to reference the
 published image from Compose rather than vendoring this repo's Python source.
 
@@ -158,4 +168,26 @@ make lint        # Run ruff linter with auto-fix
 make format      # Run ruff formatter
 make typecheck   # Run ty type checker
 make run         # Start server (PROVIDER=kokoro by default)
+```
+
+`make setup` installs the development toolchain only. To run real synthesis from
+the repo checkout, install at least one engine extra into the local venv first:
+
+```bash
+uv sync --group dev --extra kokoro
+uv pip install \
+  --python .venv/bin/python \
+  en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
+# Or, for Pocket TTS instead
+uv sync --group dev --extra pocket
+```
+
+After that, you can verify the local server the same way as the container:
+
+```bash
+make run
+curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/warmup
+curl -X POST http://127.0.0.1:8000/tts -F 'text=Hello world' -o output.wav
 ```
