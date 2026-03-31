@@ -191,3 +191,33 @@ curl http://127.0.0.1:8000/health
 curl -X POST http://127.0.0.1:8000/warmup
 curl -X POST http://127.0.0.1:8000/tts -F 'text=Hello world' -o output.wav
 ```
+
+## Releasing
+
+Use the repo helper to do the whole release flow in one command:
+
+```bash
+make release
+```
+
+That command:
+
+1. bumps `project.version` in `pyproject.toml` by one patch version
+2. runs lint, typecheck, tests, and packaging checks
+3. commits the version bump
+4. creates the matching git tag
+5. pushes the branch and the tag
+
+You can choose a different bump strategy:
+
+```bash
+make release BUMP=minor
+make release BUMP=major
+make release VERSION=0.2.0
+```
+
+To preview the exact commands first:
+
+```bash
+make release-dry-run
+```
