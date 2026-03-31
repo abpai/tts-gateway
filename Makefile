@@ -1,6 +1,7 @@
-.PHONY: help install install-dev setup pre-commit-install pre-commit-run lint format typecheck test clean lock-check run docker-build
+.PHONY: help install install-dev setup pre-commit-install pre-commit-run lint format typecheck test clean lock-check run docker-build release release-dry-run
 VENV_DIR = .venv
 PROVIDER ?= kokoro
+BUMP ?= patch
 
 help:
 	@echo 'Available commands:'
@@ -56,3 +57,9 @@ run: ## Run the TTS server
 
 docker-build: ## Build the Docker image locally
 	docker build -t tts-gateway:local .
+
+release: ## Release with default patch bump, or override with BUMP=minor / VERSION=0.1.3
+	uv run python scripts/release.py $(VERSION) --bump $(BUMP)
+
+release-dry-run: ## Preview release flow with default patch bump, or override with BUMP=minor / VERSION=0.1.3
+	uv run python scripts/release.py $(VERSION) --bump $(BUMP) --dry-run
