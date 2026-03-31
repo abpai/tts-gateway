@@ -10,6 +10,7 @@ OutputFormat = Literal['mp3', 'wav']
 DeviceMode = Literal['auto', 'cuda', 'mps', 'cpu']
 
 DEFAULT_MODELS_DIR = '~/.cache/tts-gateway/models'
+DEFAULT_DATA_DIR = '~/.cache/tts-gateway/data'
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,9 @@ class GatewayConfig:
   default_voice: str | None
   bind_host: str
   bind_port: int
+  data_dir: str
+  pipeline_version: str
+  worker_poll_seconds: float
 
 
 def _optional(name: str, default: str) -> str:
@@ -102,7 +106,7 @@ def load_config() -> GatewayConfig:
     primary_engine=primary_engine,
     fallback_engine=fallback_engine,
     output_format=_parse_output_format('TTS_OUTPUT_FORMAT', 'wav'),
-    chunk_max_chars=_parse_positive_int('TTS_CHUNK_MAX_CHARS', 3000),
+    chunk_max_chars=_parse_positive_int('TTS_CHUNK_MAX_CHARS', 500),
     request_timeout_seconds=_parse_positive_int('TTS_REQUEST_TIMEOUT_SECONDS', 3600),
     engine_timeout_seconds=_parse_positive_int('TTS_ENGINE_TIMEOUT_SECONDS', 360),
     ffmpeg_path=_optional('TTS_FFMPEG_PATH', 'ffmpeg'),
@@ -113,4 +117,7 @@ def load_config() -> GatewayConfig:
     default_voice=_parse_optional_str('TTS_DEFAULT_VOICE'),
     bind_host=_optional('TTS_GATEWAY_HOST', '127.0.0.1'),
     bind_port=_parse_positive_int('TTS_GATEWAY_PORT', 8000),
+    data_dir=_optional('TTS_DATA_DIR', os.path.expanduser(DEFAULT_DATA_DIR)),
+    pipeline_version=_optional('TTS_PIPELINE_VERSION', '1'),
+    worker_poll_seconds=float(_optional('TTS_WORKER_POLL_SECONDS', '1.0')),
   )

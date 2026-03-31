@@ -33,6 +33,8 @@ class _FakeNativeEngine(LazyNativeEngine):
     enabled: bool = True,
     load_raises: Exception | None = None,
     inference_result: AudioChunk = _DUMMY_CHUNK,
+    required_module: str | None = None,
+    install_hint: str | None = None,
   ) -> None:
     super().__init__(
       'fake',
@@ -42,6 +44,8 @@ class _FakeNativeEngine(LazyNativeEngine):
     )
     self._load_raises = load_raises
     self._inference_result = inference_result
+    self._required_module = required_module
+    self._install_hint = install_hint
     self.load_count = 0
     self.inference_count = 0
 
@@ -54,6 +58,12 @@ class _FakeNativeEngine(LazyNativeEngine):
   def _run_inference(self, text: str, voice: str | None = None) -> AudioChunk:
     self.inference_count += 1
     return self._inference_result
+
+  def required_module_name(self) -> str | None:
+    return self._required_module
+
+  def install_hint(self) -> str | None:
+    return self._install_hint
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +141,26 @@ async def test_load_failure_retries_on_next_call() -> None:
   assert engine._loaded
   assert engine.load_count == 2
   assert engine.health_status()['loadError'] is None
+
+
+@pytest.mark.asyncio
+async def test_missing_dependency_reports_install_hint() -> None:
+  engine = _FakeNativeEngine(
+    load_raises=ModuleNotFoundError("No module named 'missing_pkg'"),
+    required_module='missing_pkg',
+    install_hint='uv sync --group dev --extra missing',
+  )
+
+  with pytest.raises(
+    EngineError,
+    match='install it with: uv sync --group dev --extra missing',
+  ):
+    await engine.synthesize('should fail')
+
+  assert (
+    engine.health_status()['loadError']
+    == 'missing dependency "missing_pkg"; install it with: uv sync --group dev --extra missing'
+  )
 
 
 # ---------------------------------------------------------------------------

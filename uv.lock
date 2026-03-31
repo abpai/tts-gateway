@@ -2148,6 +2148,7 @@ dependencies = [
     { name = "numpy" },
     { name = "python-multipart" },
     { name = "soundfile" },
+    { name = "tqdm" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -2193,6 +2194,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'all'", specifier = ">=2.10,<2.11", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "extra == 'kokoro'", specifier = ">=2.10,<2.11", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "extra == 'pocket'", specifier = ">=2.10,<2.11", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "tqdm", specifier = ">=4.66,<5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<0.36" },
 ]
 provides-extras = ["kokoro", "pocket", "all"]
