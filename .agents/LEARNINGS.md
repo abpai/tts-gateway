@@ -8,6 +8,7 @@
 | 2026-03-30 | self | Updated runtime defaults without updating shared test config fixtures | Keep `tests/conftest.py` defaults aligned with `load_config()` so helper-based tests reflect real gateway defaults |
 | 2026-03-30 | self | Planned Bunny final-state deployment without first adding a publishable artifact here | Add Dockerfile, `.dockerignore`, and GHCR publishing in this repo before switching Bunny away from its vendored copy |
 | 2026-03-30 | self | Tried to verify `/tts` from a repo venv that only had dev deps installed | For local runtime smoke tests, install the engine extra first, e.g. `uv sync --group dev --extra kokoro`, or use the documented Docker path |
+| 2026-03-30 | self | Ran packaging checks against stale files left in `dist/` | In CI and release workflows, `rm -rf dist` before `uv build` so `twine check` only sees the current release artifacts |
 
 ## User Preferences
 
