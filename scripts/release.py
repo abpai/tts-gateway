@@ -134,7 +134,9 @@ def run_checks(*, dry_run: bool) -> None:
   if dry_run:
     print('$ uvx twine check dist/*')
   else:
-    dist_files = sorted(str(p) for p in Path('dist').glob('*'))
+    dist_files = sorted(
+      str(p) for p in Path('dist').iterdir() if p.suffix in ('.whl', '.gz')
+    )
     if not dist_files:
       raise ReleaseError('uv build produced no artifacts in dist/')
     run_command(['uvx', 'twine', 'check', *dist_files], dry_run=False)
