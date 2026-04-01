@@ -28,9 +28,16 @@ Kokoro depends on [misaki](https://github.com/hexgrad/misaki) for grapheme-to-ph
 Install the model manually into the tool's venv:
 
 ```bash
-uv pip install \
-  --python ~/.local/share/uv/tools/tts-gateway/bin/python \
-  en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+~/.local/share/uv/tools/tts-gateway/bin/python -m spacy download en_core_web_sm
+```
+
+### Upgrading
+
+`uv tool upgrade` recreates the virtual environment, so the spaCy model must be reinstalled after every upgrade:
+
+```bash
+uv tool upgrade tts-gateway
+~/.local/share/uv/tools/tts-gateway/bin/python -m spacy download en_core_web_sm
 ```
 
 For local development, see [Development](#development) below.
