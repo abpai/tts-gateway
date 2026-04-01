@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 
 
 def preload_kokoro(models_dir: str) -> None:
@@ -31,6 +32,10 @@ def _is_enabled(name: str, default: bool) -> bool:
 
 
 def main() -> None:
+  warnings.filterwarnings('ignore', category=UserWarning, module=r'torch\.')
+  warnings.filterwarnings('ignore', category=FutureWarning, module=r'torch\.')
+  warnings.filterwarnings('ignore', message='.*unauthenticated requests.*HF.*')
+
   models_dir = os.environ.get(
     'TTS_MODELS_DIR', os.path.expanduser('~/.cache/tts-gateway/models')
   )

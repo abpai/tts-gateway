@@ -36,6 +36,9 @@ ARG PRELOAD_POCKET=false
 RUN PRELOAD_KOKORO=${PRELOAD_KOKORO} PRELOAD_POCKET=${PRELOAD_POCKET} \
     .venv/bin/python scripts/preload_models.py
 
+ENV TTS_PRIMARY_ENGINE=kokoro
+ENV TTS_OUTPUT_FORMAT=mp3
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

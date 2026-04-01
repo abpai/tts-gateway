@@ -105,7 +105,7 @@ def load_config() -> GatewayConfig:
   return GatewayConfig(
     primary_engine=primary_engine,
     fallback_engine=fallback_engine,
-    output_format=_parse_output_format('TTS_OUTPUT_FORMAT', 'wav'),
+    output_format=_parse_output_format('TTS_OUTPUT_FORMAT', 'mp3'),
     chunk_max_chars=_parse_positive_int('TTS_CHUNK_MAX_CHARS', 500),
     request_timeout_seconds=_parse_positive_int('TTS_REQUEST_TIMEOUT_SECONDS', 3600),
     engine_timeout_seconds=_parse_positive_int('TTS_ENGINE_TIMEOUT_SECONDS', 360),

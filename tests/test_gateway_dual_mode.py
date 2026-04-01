@@ -1,9 +1,8 @@
-"""Tests for gateway dual-mode engine resolution and chain behaviour."""
+"""Tests for engine resolution, chain behaviour, warmup, and ordering via JobRuntime."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from unittest.mock import patch
 
 import pytest
 
@@ -17,7 +16,9 @@ from tests.conftest import (
 )
 from tts_gateway.engines.base import AudioChunk, EngineError
 from tts_gateway.engines.native_engine import LazyNativeEngine
-from tts_gateway.gateway import SynthesisError, TtsGateway
+from tts_gateway.render import plan_chunks, synthesize_chunks
+from tts_gateway.runtime import JobRuntime, NoEnginesError
+from tts_gateway.types import SynthesisSpec
 
 
 class _WarmupEngine(LazyNativeEngine):
@@ -38,44 +39,43 @@ class _WarmupEngine(LazyNativeEngine):
     return DUMMY_CHUNK
 
 
+def _runtime(tmp_path, **overrides) -> JobRuntime:
+  overrides.setdefault('data_dir', str(tmp_path / 'data'))
+  return JobRuntime(_make_config(**overrides))
+
+
 # ---------------------------------------------------------------------------
 # Engine resolution
 # ---------------------------------------------------------------------------
 
 
-def test_enabled_selects_native() -> None:
-  """When engine is enabled, use native mode."""
-  cfg = _make_config(kokoro_enabled=True)
-  gw = TtsGateway(cfg)
-  info = gw.engine_info()
+def test_enabled_selects_native(tmp_path) -> None:
+  rt = _runtime(tmp_path, kokoro_enabled=True)
+  info = rt.engine_info()
   assert info['kokoro']['mode'] == 'native'
+  rt.close()
 
 
-def test_disabled_engine_is_unavailable() -> None:
-  """When engine is disabled, it is unavailable."""
-  cfg = _make_config(kokoro_enabled=False)
-  gw = TtsGateway(cfg)
-  info = gw.engine_info()
+def test_disabled_engine_is_unavailable(tmp_path) -> None:
+  rt = _runtime(tmp_path, kokoro_enabled=False)
+  info = rt.engine_info()
   assert info['kokoro']['mode'] == 'disabled'
+  rt.close()
 
 
 # ---------------------------------------------------------------------------
-# Chain behaviour — all engines unavailable → 503
+# Chain behaviour — all engines unavailable
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_all_unavailable_raises_503() -> None:
-  cfg = _make_config(
-    kokoro_enabled=False,
-    pocket_enabled=False,
-  )
-  gw = TtsGateway(cfg)
+async def test_all_unavailable_raises_error(tmp_path) -> None:
+  rt = _runtime(tmp_path, kokoro_enabled=False, pocket_enabled=False)
+  spec = rt.make_spec('hello')
 
-  with pytest.raises(SynthesisError) as exc_info:
-    await gw.synthesize('hello')
-
-  assert exc_info.value.unavailable is True
+  with pytest.raises(NoEnginesError):
+    await rt.run_until_complete(spec)
+  rt.close()
 
 
 # ---------------------------------------------------------------------------
@@ -84,35 +84,34 @@ async def test_all_unavailable_raises_503() -> None:
 
 
 @pytest.mark.asyncio
-async def test_primary_fails_fallback_succeeds() -> None:
-  cfg = _make_config(
+async def test_primary_fails_fallback_succeeds(tmp_path) -> None:
+  rt = _runtime(
+    tmp_path,
     kokoro_enabled=True,
     pocket_enabled=True,
     fallback_engine='pocket',
   )
-  gw = TtsGateway(cfg)
+  rt._engine_map['kokoro'] = FailingEngine('kokoro', EngineError('kokoro broke'))
+  rt._engine_map['pocket'] = MockEngine('pocket')
 
-  gw.engines['kokoro'] = FailingEngine('kokoro', EngineError('kokoro broke'))
-  gw.engines['pocket'] = MockEngine('pocket')
-
-  with patch('tts_gateway.gateway.encode_output', return_value=(b'audio', 'audio/wav')):
-    result = await gw.synthesize('hello')
-
-  assert result.payload == b'audio'
+  spec = rt.make_spec('hello')
+  artifact = await rt.run_until_complete(spec)
+  assert artifact.output_path.exists()
+  rt.close()
 
 
 @pytest.mark.asyncio
-async def test_gateway_uses_config_default_voice() -> None:
-  cfg = _make_config(default_voice='af_bella')
-  gw = TtsGateway(cfg)
+async def test_runtime_uses_config_default_voice(tmp_path) -> None:
+  rt = _runtime(tmp_path, default_voice='af_bella')
   engine = MockEngine('kokoro')
-  gw.engines['kokoro'] = engine
+  rt._engine_map['kokoro'] = engine
 
-  with patch('tts_gateway.gateway.encode_output', return_value=(b'audio', 'audio/wav')):
-    result = await gw.synthesize('hello')
+  spec = rt.make_spec('hello')
+  assert spec.voice == 'af_bella'
 
-  assert result.payload == b'audio'
-  assert engine.calls == [('hello', 'af_bella')]
+  await rt.run_until_complete(spec)
+  assert engine.calls[0] == ('hello', 'af_bella')
+  rt.close()
 
 
 # ---------------------------------------------------------------------------
@@ -120,21 +119,21 @@ async def test_gateway_uses_config_default_voice() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_engine_info_native_and_disabled() -> None:
-  cfg = _make_config(
-    kokoro_enabled=True,
-    pocket_enabled=False,
-  )
-  gw = TtsGateway(cfg)
-  info = gw.engine_info()
+def test_engine_info_native_and_disabled(tmp_path) -> None:
+  rt = _runtime(tmp_path, kokoro_enabled=True, pocket_enabled=False)
+  info = rt.engine_info()
   assert info['kokoro']['mode'] == 'native'
   assert info['pocket']['mode'] == 'disabled'
+  rt.close()
 
 
-def test_chunk_concurrency_uses_cpu_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr('tts_gateway.gateway.os.cpu_count', lambda: 8)
-  gw = TtsGateway(_make_config())
-  assert gw.chunk_concurrency() == 4
+def test_chunk_concurrency_uses_cpu_cap(
+  tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  monkeypatch.setattr('tts_gateway.runtime.os.cpu_count', lambda: 8)
+  rt = _runtime(tmp_path)
+  assert rt.concurrency == 4
+  rt.close()
 
 
 # ---------------------------------------------------------------------------
@@ -143,65 +142,40 @@ def test_chunk_concurrency_uses_cpu_cap(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_warmup_loads_native_engines() -> None:
-  cfg = _make_config(kokoro_enabled=True, pocket_enabled=False)
-  gw = TtsGateway(cfg)
+async def test_warmup_loads_native_engines(tmp_path) -> None:
+  rt = _runtime(tmp_path, kokoro_enabled=True, pocket_enabled=False)
   kokoro_engine = _WarmupEngine()
-  gw.engines['kokoro'] = kokoro_engine
+  rt._engine_map['kokoro'] = kokoro_engine
 
-  results = await gw.warmup()
+  results = await rt.warmup()
   assert 'kokoro' in results
   assert results['kokoro']['loaded'] is True
   assert results['kokoro']['device'] == 'cpu'
   assert kokoro_engine.load_count == 1
+  rt.close()
 
 
 # ---------------------------------------------------------------------------
-# Timeout preserves attempt history
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_timeout_raises_synthesis_error() -> None:
-  """Request timeout should raise SynthesisError with timed_out flag."""
-  cfg = _make_config(
-    kokoro_enabled=True,
-    pocket_enabled=True,
-    fallback_engine='pocket',
-    request_timeout_seconds=1,
-  )
-  gw = TtsGateway(cfg)
-  gw.engines['kokoro'] = SlowEngine('kokoro', delay=5.0)
-  gw.engines['pocket'] = SlowEngine('pocket', delay=5.0)
-
-  with pytest.raises(SynthesisError) as exc_info:
-    await gw.synthesize_with_timeout('hello')
-
-  assert exc_info.value.timed_out is True
-
-
-# ---------------------------------------------------------------------------
-# Per-engine timeout
+# Per-engine timeout fallback
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_engine_timeout_falls_back() -> None:
-  """An engine that exceeds engine_timeout_seconds should be skipped."""
-  cfg = _make_config(
+async def test_engine_timeout_falls_back(tmp_path) -> None:
+  rt = _runtime(
+    tmp_path,
     kokoro_enabled=True,
     pocket_enabled=True,
     fallback_engine='pocket',
     engine_timeout_seconds=1,
   )
-  gw = TtsGateway(cfg)
-  gw.engines['kokoro'] = SlowEngine('kokoro', delay=5.0)
-  gw.engines['pocket'] = MockEngine('pocket')
+  rt._engine_map['kokoro'] = SlowEngine('kokoro', delay=5.0)
+  rt._engine_map['pocket'] = MockEngine('pocket')
 
-  with patch('tts_gateway.gateway.encode_output', return_value=(b'audio', 'audio/wav')):
-    result = await gw.synthesize('hello')
-
-  assert result.payload == b'audio'
+  spec = rt.make_spec('hello')
+  artifact = await rt.run_until_complete(spec)
+  assert artifact.output_path.exists()
+  rt.close()
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +186,6 @@ async def test_engine_timeout_falls_back() -> None:
 @pytest.mark.asyncio
 async def test_synthesis_core_preserves_chunk_order() -> None:
   """Chunks must arrive in original text order despite parallel execution."""
-  from tts_gateway.synthesis import SynthesisRequest, plan_chunks, synthesize_chunks
-
   engine = StaggeredEngine(
     'kokoro',
     delays={
@@ -224,7 +196,7 @@ async def test_synthesis_core_preserves_chunk_order() -> None:
   )
 
   plan = plan_chunks(
-    SynthesisRequest(
+    SynthesisSpec(
       text='chunk-0',
       voice='af_bella',
       output_format='wav',

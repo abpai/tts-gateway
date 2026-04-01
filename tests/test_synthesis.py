@@ -6,69 +6,58 @@ import pytest
 
 from tests.conftest import DUMMY_CHUNK, FailingEngine, MockEngine, StaggeredEngine
 from tts_gateway.engines.base import EngineError
-from tts_gateway.synthesis import (
-  ChunkPlan,
-  SynthesisRequest,
+from tts_gateway.render import (
   plan_chunks,
-  stream_synthesis,
+  stream_audio,
   synthesize_chunks,
   synthesize_to_disk,
 )
+from tts_gateway.types import RenderPlan, SynthesisSpec
 
 # ---------------------------------------------------------------------------
-# SynthesisRequest
+# SynthesisSpec
 # ---------------------------------------------------------------------------
 
 
 def test_content_hash_deterministic() -> None:
-  r1 = SynthesisRequest(text='hello', voice='v', output_format='wav')
-  r2 = SynthesisRequest(text='hello', voice='v', output_format='wav')
+  r1 = SynthesisSpec(text='hello', voice='v', output_format='wav')
+  r2 = SynthesisSpec(text='hello', voice='v', output_format='wav')
   assert r1.content_hash == r2.content_hash
 
 
 def test_content_hash_varies_with_voice() -> None:
-  r1 = SynthesisRequest(text='hello', voice='v1', output_format='wav')
-  r2 = SynthesisRequest(text='hello', voice='v2', output_format='wav')
+  r1 = SynthesisSpec(text='hello', voice='v1', output_format='wav')
+  r2 = SynthesisSpec(text='hello', voice='v2', output_format='wav')
   assert r1.content_hash != r2.content_hash
 
 
 def test_content_hash_varies_with_format() -> None:
-  r1 = SynthesisRequest(text='hello', voice='v', output_format='wav')
-  r2 = SynthesisRequest(text='hello', voice='v', output_format='mp3')
+  r1 = SynthesisSpec(text='hello', voice='v', output_format='wav')
+  r2 = SynthesisSpec(text='hello', voice='v', output_format='mp3')
   assert r1.content_hash != r2.content_hash
 
 
 def test_content_hash_varies_with_text() -> None:
-  r1 = SynthesisRequest(text='hello', voice='v', output_format='wav')
-  r2 = SynthesisRequest(text='world', voice='v', output_format='wav')
+  r1 = SynthesisSpec(text='hello', voice='v', output_format='wav')
+  r2 = SynthesisSpec(text='world', voice='v', output_format='wav')
   assert r1.content_hash != r2.content_hash
 
 
 def test_content_hash_varies_with_chunk_size() -> None:
-  r1 = SynthesisRequest(
-    text='hello', voice='v', output_format='wav', chunk_max_chars=500
-  )
-  r2 = SynthesisRequest(
-    text='hello', voice='v', output_format='wav', chunk_max_chars=1000
-  )
+  r1 = SynthesisSpec(text='hello', voice='v', output_format='wav', chunk_max_chars=500)
+  r2 = SynthesisSpec(text='hello', voice='v', output_format='wav', chunk_max_chars=1000)
   assert r1.content_hash != r2.content_hash
 
 
 def test_content_hash_varies_with_pipeline_version() -> None:
-  r1 = SynthesisRequest(
-    text='hello', voice='v', output_format='wav', pipeline_version='1'
-  )
-  r2 = SynthesisRequest(
-    text='hello', voice='v', output_format='wav', pipeline_version='2'
-  )
+  r1 = SynthesisSpec(text='hello', voice='v', output_format='wav', pipeline_version='1')
+  r2 = SynthesisSpec(text='hello', voice='v', output_format='wav', pipeline_version='2')
   assert r1.content_hash != r2.content_hash
 
 
 def test_to_json_from_json_roundtrip() -> None:
-  r1 = SynthesisRequest(
-    text='hello', voice='v', output_format='mp3', chunk_max_chars=700
-  )
-  r2 = SynthesisRequest.from_json(r1.to_json())
+  r1 = SynthesisSpec(text='hello', voice='v', output_format='mp3', chunk_max_chars=700)
+  r2 = SynthesisSpec.from_json(r1.to_json())
   assert r1 == r2
   assert r1.content_hash == r2.content_hash
 
@@ -79,7 +68,7 @@ def test_to_json_from_json_roundtrip() -> None:
 
 
 def test_plan_chunks_single() -> None:
-  request = SynthesisRequest(text='Hello world', voice='v', output_format='wav')
+  request = SynthesisSpec(text='Hello world', voice='v', output_format='wav')
   plan = plan_chunks(request)
   assert plan.chunks == ('Hello world',)
   assert plan.request_hash == request.content_hash
@@ -87,7 +76,7 @@ def test_plan_chunks_single() -> None:
 
 
 def test_plan_chunks_splits_long_text() -> None:
-  request = SynthesisRequest(
+  request = SynthesisSpec(
     text='First sentence. Second sentence. Third sentence.',
     voice='v',
     output_format='wav',
@@ -100,7 +89,7 @@ def test_plan_chunks_splits_long_text() -> None:
 
 
 def test_plan_chunks_empty_raises() -> None:
-  request = SynthesisRequest(text='   ', voice='v', output_format='wav')
+  request = SynthesisSpec(text='   ', voice='v', output_format='wav')
   with pytest.raises(ValueError, match='empty'):
     plan_chunks(request)
 
@@ -116,7 +105,7 @@ async def test_synthesize_chunks_yields_in_order() -> None:
     'mock',
     delays={'First.': 0.05, 'Second.': 0.0, 'Third.': 0.02},
   )
-  plan = ChunkPlan(
+  plan = RenderPlan(
     request_hash='test',
     chunks=('First.', 'Second.', 'Third.'),
     voice='v',
@@ -138,7 +127,7 @@ async def test_synthesize_chunks_runs_concurrently() -> None:
     'mock',
     delays={'a': 0.05, 'b': 0.05, 'c': 0.05},
   )
-  plan = ChunkPlan(
+  plan = RenderPlan(
     request_hash='test',
     chunks=('a', 'b', 'c'),
     voice='v',
@@ -157,7 +146,7 @@ async def test_synthesize_chunks_respects_concurrency() -> None:
     'mock',
     delays={'a': 0.05, 'b': 0.05, 'c': 0.05, 'd': 0.05},
   )
-  plan = ChunkPlan(
+  plan = RenderPlan(
     request_hash='test',
     chunks=('a', 'b', 'c', 'd'),
     voice='v',
@@ -174,7 +163,7 @@ async def test_synthesize_chunks_respects_concurrency() -> None:
 async def test_synthesize_chunks_engine_fallback() -> None:
   failing = FailingEngine('bad', EngineError('broken'))
   good = MockEngine('good')
-  plan = ChunkPlan(
+  plan = RenderPlan(
     request_hash='test',
     chunks=('hello',),
     voice='v',
@@ -194,7 +183,7 @@ async def test_synthesize_chunks_engine_fallback() -> None:
 @pytest.mark.asyncio
 async def test_synthesize_chunks_all_engines_fail() -> None:
   failing = FailingEngine('bad', EngineError('broken'))
-  plan = ChunkPlan(
+  plan = RenderPlan(
     request_hash='test',
     chunks=('hello',),
     voice='v',
@@ -208,7 +197,7 @@ async def test_synthesize_chunks_all_engines_fail() -> None:
 
 @pytest.mark.asyncio
 async def test_synthesize_chunks_no_engines() -> None:
-  plan = ChunkPlan(
+  plan = RenderPlan(
     request_hash='test',
     chunks=('hello',),
     voice='v',
@@ -221,19 +210,17 @@ async def test_synthesize_chunks_no_engines() -> None:
 
 
 # ---------------------------------------------------------------------------
-# stream_synthesis
+# stream_audio
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_stream_synthesis_wav_yields_pcm() -> None:
+async def test_stream_audio_wav_yields_pcm() -> None:
   engine = MockEngine('mock')
-  request = SynthesisRequest(text='hello', voice='v', output_format='wav')
+  request = SynthesisSpec(text='hello', voice='v', output_format='wav')
 
   parts = []
-  async for data in stream_synthesis(
-    request, [engine], concurrency=4, engine_timeout=10
-  ):
+  async for data in stream_audio(request, [engine], concurrency=4, engine_timeout=10):
     parts.append(data)
 
   assert len(parts) == 1
@@ -241,19 +228,17 @@ async def test_stream_synthesis_wav_yields_pcm() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_synthesis_mp3_yields_encoded(monkeypatch) -> None:
+async def test_stream_audio_mp3_yields_encoded(monkeypatch) -> None:
   engine = MockEngine('mock')
-  request = SynthesisRequest(text='hello', voice='v', output_format='mp3')
+  request = SynthesisSpec(text='hello', voice='v', output_format='mp3')
 
   monkeypatch.setattr(
-    'tts_gateway.synthesis.encode_output',
+    'tts_gateway.render.encode_output',
     lambda chunk, fmt, ffmpeg: (b'fake-mp3', 'audio/mpeg'),
   )
 
   parts = []
-  async for data in stream_synthesis(
-    request, [engine], concurrency=4, engine_timeout=10
-  ):
+  async for data in stream_audio(request, [engine], concurrency=4, engine_timeout=10):
     parts.append(data)
 
   assert parts == [b'fake-mp3']
@@ -267,7 +252,7 @@ async def test_stream_synthesis_mp3_yields_encoded(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_synthesize_to_disk_creates_files(tmp_path) -> None:
   engine = MockEngine('mock')
-  request = SynthesisRequest(text='Hello world', voice='v', output_format='wav')
+  request = SynthesisSpec(text='Hello world', voice='v', output_format='wav')
 
   artifact = await synthesize_to_disk(
     request, [engine], tmp_path, concurrency=4, engine_timeout=10
@@ -285,7 +270,7 @@ async def test_synthesize_to_disk_creates_files(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_synthesize_to_disk_cache_hit(tmp_path) -> None:
   engine = MockEngine('mock')
-  request = SynthesisRequest(text='Hello world', voice='v', output_format='wav')
+  request = SynthesisSpec(text='Hello world', voice='v', output_format='wav')
 
   a1 = await synthesize_to_disk(
     request, [engine], tmp_path, concurrency=4, engine_timeout=10
@@ -304,8 +289,8 @@ async def test_synthesize_to_disk_cache_hit(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_synthesize_to_disk_content_addressed(tmp_path) -> None:
   engine = MockEngine('mock')
-  r1 = SynthesisRequest(text='Hello', voice='v', output_format='wav')
-  r2 = SynthesisRequest(text='World', voice='v', output_format='wav')
+  r1 = SynthesisSpec(text='Hello', voice='v', output_format='wav')
+  r2 = SynthesisSpec(text='World', voice='v', output_format='wav')
 
   a1 = await synthesize_to_disk(
     r1, [engine], tmp_path, concurrency=4, engine_timeout=10
@@ -322,7 +307,7 @@ async def test_synthesize_to_disk_content_addressed(tmp_path) -> None:
 async def test_synthesize_to_disk_resumes_partial(tmp_path) -> None:
   """If some chunk WAVs exist on disk, only synthesize the missing ones."""
   engine = MockEngine('mock')
-  request = SynthesisRequest(
+  request = SynthesisSpec(
     text='First sentence. Second sentence. Third sentence.',
     voice='v',
     output_format='wav',

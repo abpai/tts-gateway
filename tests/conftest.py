@@ -5,7 +5,7 @@ from dataclasses import replace
 from typing import TypedDict, Unpack
 
 from tts_gateway.config import DeviceMode, EngineName, GatewayConfig, OutputFormat
-from tts_gateway.engines.base import AudioChunk, TtsEngine
+from tts_gateway.engines.base import AudioChunk, Engine
 
 _BASE_CONFIG = GatewayConfig(
   primary_engine='kokoro',
@@ -64,7 +64,7 @@ DUMMY_CHUNK = AudioChunk(
 )
 
 
-class MockEngine(TtsEngine):
+class MockEngine(Engine):
   """Simple engine that returns DUMMY_CHUNK."""
 
   def __init__(self, name: str = 'mock', chunk: AudioChunk = DUMMY_CHUNK) -> None:
@@ -77,7 +77,7 @@ class MockEngine(TtsEngine):
     return self.chunk
 
 
-class FailingEngine(TtsEngine):
+class FailingEngine(Engine):
   """Engine that always raises."""
 
   def __init__(self, name: str, error: Exception) -> None:
@@ -88,7 +88,7 @@ class FailingEngine(TtsEngine):
     raise self._error
 
 
-class SlowEngine(TtsEngine):
+class SlowEngine(Engine):
   """Engine with a configurable delay."""
 
   def __init__(self, name: str, delay: float) -> None:
@@ -100,7 +100,7 @@ class SlowEngine(TtsEngine):
     return DUMMY_CHUNK
 
 
-class StaggeredEngine(TtsEngine):
+class StaggeredEngine(Engine):
   """Engine with per-text delays and concurrency tracking."""
 
   def __init__(self, name: str, delays: dict[str, float]) -> None:

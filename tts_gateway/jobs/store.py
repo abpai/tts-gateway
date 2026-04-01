@@ -93,17 +93,21 @@ class JobStore:
       'INSERT OR IGNORE INTO jobs (key, status, request_json, created_at) VALUES (?, ?, ?, ?)',
       (key, 'queued', request_json, now),
     )
-    # Reset failed/stale running jobs back to queued on resubmission
+    # Reset failed jobs back to queued on resubmission.
+    # Running jobs are NOT reset here — stale running jobs are handled
+    # separately by reset_stale() on a timer in the worker loop.
     self._conn.execute(
       """
       UPDATE jobs
       SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL
-      WHERE key = ? AND status IN ('failed', 'running')
+      WHERE key = ? AND status = 'failed'
       """,
       (key,),
     )
     self._conn.commit()
-    return self.get(key)
+    record = self.get(key)
+    assert record is not None, f'job {key} must exist after INSERT OR IGNORE'
+    return record
 
   def get(self, key: str) -> JobRecord | None:
     """Fetch a job by key."""
@@ -114,23 +118,30 @@ class JobStore:
 
   def claim_next(self) -> JobRecord | None:
     """Atomically claim the oldest queued job. Returns None if queue is empty."""
-    now = _now_iso()
     cursor = self._conn.execute(
       """
       UPDATE jobs
-      SET status = 'running', started_at = ?
+      SET status = 'running', started_at = datetime('now')
       WHERE key = (
         SELECT key FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1
       )
       RETURNING *
       """,
-      (now,),
     )
     row = cursor.fetchone()
     self._conn.commit()
     if row is None:
       return None
     return _row_to_record(row)
+
+  def claim(self, key: str) -> bool:
+    """Atomically claim a specific job by key. Returns True if claimed."""
+    cursor = self._conn.execute(
+      "UPDATE jobs SET status = 'running', started_at = datetime('now') WHERE key = ? AND status = 'queued'",
+      (key,),
+    )
+    self._conn.commit()
+    return cursor.rowcount > 0
 
   def update_progress(self, key: str, chunks_done: int, chunks_total: int) -> None:
     """Update chunk progress for a running job."""
@@ -164,6 +175,14 @@ class JobStore:
     )
     self._conn.commit()
 
+  def requeue(self, key: str) -> None:
+    """Reset a running/encoding job back to queued."""
+    self._conn.execute(
+      "UPDATE jobs SET status = 'queued', started_at = NULL WHERE key = ?",
+      (key,),
+    )
+    self._conn.commit()
+
   def mark_failed(self, key: str, error: str) -> None:
     now = _now_iso()
     self._conn.execute(
@@ -192,7 +211,7 @@ class JobStore:
       """
       UPDATE jobs
       SET status = 'queued', started_at = NULL
-      WHERE status = 'running'
+      WHERE status IN ('running', 'encoding')
         AND started_at < datetime('now', ? || ' seconds')
       """,
       (f'-{older_than_seconds}',),

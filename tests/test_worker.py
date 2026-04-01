@@ -1,109 +1,73 @@
-"""Tests for the async job worker."""
+"""Tests for worker execution via JobRuntime.run_next() and run_worker_loop()."""
 
 from __future__ import annotations
 
 import pytest
 
-from tests.conftest import FailingEngine, MockEngine
-from tts_gateway.jobs.store import JobStore
-from tts_gateway.jobs.worker import process_job, run_worker
-from tts_gateway.synthesis import SynthesisRequest
+from tests.conftest import FailingEngine, MockEngine, _make_config
+from tts_gateway.runtime import JobRuntime, run_worker_loop
 
 
-@pytest.fixture()
-def store(tmp_path) -> JobStore:
-  s = JobStore(tmp_path / 'test.db')
-  yield s
-  s.close()
+def _runtime(tmp_path, **overrides) -> JobRuntime:
+  overrides.setdefault('data_dir', str(tmp_path / 'data'))
+  return JobRuntime(_make_config(**overrides))
 
 
-@pytest.fixture()
-def artifacts_dir(tmp_path):
-  d = tmp_path / 'artifacts'
-  d.mkdir()
-  return d
-
-
-def _make_request_json(**overrides) -> str:
-  request = SynthesisRequest(
-    text=overrides.get('text', 'Hello world'),
-    voice=overrides.get('voice', 'v'),
-    output_format=overrides.get('output_format', 'wav'),
-  )
-  return request.to_json()
+def _inject_engines(rt: JobRuntime, engines: list) -> None:
+  rt._engine_map = {e.name: e for e in engines}
+  rt._engine_chain = [e.name for e in engines]
 
 
 @pytest.mark.asyncio
-async def test_process_job_success(store: JobStore, artifacts_dir) -> None:
-  request_json = _make_request_json()
-  store.create_or_get('key1', request_json)
-  store.claim_next()
+async def test_process_job_success(tmp_path) -> None:
+  rt = _runtime(tmp_path)
+  _inject_engines(rt, [MockEngine()])
+  spec = rt.make_spec('Hello world')
+  rt.submit(spec)
 
-  await process_job(
-    store,
-    'key1',
-    request_json,
-    [MockEngine()],
-    artifacts_dir,
-    concurrency=4,
-    engine_timeout=10,
-  )
+  assert await rt.run_next() is True
 
-  job = store.get('key1')
-  assert job is not None
-  assert job.status == 'ready'
-  assert job.artifact_path is not None
-  assert job.chunks_total == 1
+  view = rt.get(spec.content_hash)
+  assert view is not None
+  assert view.status == 'ready'
+  assert view.chunks_total == 1
+  rt.close()
 
 
 @pytest.mark.asyncio
-async def test_process_job_failure(store: JobStore, artifacts_dir) -> None:
-  request_json = _make_request_json()
-  store.create_or_get('key1', request_json)
-  store.claim_next()
+async def test_process_job_failure(tmp_path) -> None:
+  rt = _runtime(tmp_path)
+  _inject_engines(rt, [FailingEngine('fail', RuntimeError('engine exploded'))])
+  spec = rt.make_spec('Hello world')
+  rt.submit(spec)
 
-  await process_job(
-    store,
-    'key1',
-    request_json,
-    [FailingEngine('fail', RuntimeError('engine exploded'))],
-    artifacts_dir,
-    concurrency=4,
-    engine_timeout=10,
-  )
+  assert await rt.run_next() is True
 
-  job = store.get('key1')
-  assert job is not None
-  assert job.status == 'failed'
-  assert 'engine exploded' in (job.error or '')
+  view = rt.get(spec.content_hash)
+  assert view is not None
+  assert view.status == 'failed'
+  assert 'engine exploded' in (view.error or '')
+  rt.close()
 
 
 @pytest.mark.asyncio
-async def test_run_worker_once(store: JobStore, artifacts_dir) -> None:
-  request_json = _make_request_json()
-  store.create_or_get('key1', request_json)
+async def test_run_worker_once(tmp_path) -> None:
+  rt = _runtime(tmp_path)
+  _inject_engines(rt, [MockEngine()])
+  spec = rt.make_spec('Hello world')
+  rt.submit(spec)
 
-  await run_worker(
-    store,
-    [MockEngine()],
-    artifacts_dir,
-    once=True,
-    concurrency=4,
-    engine_timeout=10,
-  )
+  await run_worker_loop(rt, poll_seconds=0.1, once=True)
 
-  job = store.get('key1')
-  assert job is not None
-  assert job.status == 'ready'
+  view = rt.get(spec.content_hash)
+  assert view is not None
+  assert view.status == 'ready'
+  rt.close()
 
 
 @pytest.mark.asyncio
-async def test_run_worker_once_empty_queue(store: JobStore, artifacts_dir) -> None:
-  await run_worker(
-    store,
-    [MockEngine()],
-    artifacts_dir,
-    once=True,
-    concurrency=4,
-    engine_timeout=10,
-  )
+async def test_run_worker_once_empty_queue(tmp_path) -> None:
+  rt = _runtime(tmp_path)
+  _inject_engines(rt, [MockEngine()])
+  await run_worker_loop(rt, poll_seconds=0.1, once=True)
+  rt.close()

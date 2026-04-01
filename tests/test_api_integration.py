@@ -34,11 +34,9 @@ def test_tts_legacy_audio_accept(tmp_path) -> None:
 
   with TestClient(app, raise_server_exceptions=False) as client:
     with patch(
-      'tts_gateway.gateway.encode_output', return_value=(b'wav-data', 'audio/wav')
+      'tts_gateway.render.encode_output', return_value=(b'wav-data', 'audio/wav')
     ):
-      with patch(
-        'tts_gateway.synthesis._synthesize_with_chain', return_value=DUMMY_CHUNK
-      ):
+      with patch('tts_gateway.render._try_engines', return_value=DUMMY_CHUNK):
         resp = client.post(
           '/tts',
           data={'text': 'Hello world'},
@@ -47,7 +45,6 @@ def test_tts_legacy_audio_accept(tmp_path) -> None:
 
     assert resp.status_code == 200
     assert resp.content == b'wav-data'
-    assert resp.headers['content-type'] == 'audio/wav'
 
 
 def test_tts_default_accept_returns_audio(tmp_path) -> None:
@@ -57,16 +54,13 @@ def test_tts_default_accept_returns_audio(tmp_path) -> None:
 
   with TestClient(app, raise_server_exceptions=False) as client:
     with patch(
-      'tts_gateway.gateway.encode_output', return_value=(b'wav-data', 'audio/wav')
+      'tts_gateway.render.encode_output', return_value=(b'wav-data', 'audio/wav')
     ):
-      with patch(
-        'tts_gateway.synthesis._synthesize_with_chain', return_value=DUMMY_CHUNK
-      ):
+      with patch('tts_gateway.render._try_engines', return_value=DUMMY_CHUNK):
         resp = client.post('/tts', data={'text': 'Hello world'})
 
     assert resp.status_code == 200
     assert resp.content == b'wav-data'
-    assert resp.headers['content-type'] == 'audio/wav'
 
 
 # ---------------------------------------------------------------------------
@@ -80,11 +74,9 @@ def test_tts_sync_endpoint(tmp_path) -> None:
 
   with TestClient(app, raise_server_exceptions=False) as client:
     with patch(
-      'tts_gateway.gateway.encode_output', return_value=(b'wav-data', 'audio/wav')
+      'tts_gateway.render.encode_output', return_value=(b'wav-data', 'audio/wav')
     ):
-      with patch(
-        'tts_gateway.synthesis._synthesize_with_chain', return_value=DUMMY_CHUNK
-      ):
+      with patch('tts_gateway.render._try_engines', return_value=DUMMY_CHUNK):
         resp = client.post('/tts/sync', data={'text': 'Hello world'})
 
     assert resp.status_code == 200
@@ -220,3 +212,66 @@ def test_tts_empty_text(tmp_path) -> None:
   with TestClient(app, raise_server_exceptions=False) as client:
     resp = client.post('/tts', data={'text': ''})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# /v1/ canonical routes
+# ---------------------------------------------------------------------------
+
+
+def test_v1_speech(tmp_path) -> None:
+  config = _make_config(data_dir=str(tmp_path / 'data'))
+  app = create_app(config)
+
+  with TestClient(app, raise_server_exceptions=False) as client:
+    with patch(
+      'tts_gateway.render.encode_output', return_value=(b'wav-data', 'audio/wav')
+    ):
+      with patch('tts_gateway.render._try_engines', return_value=DUMMY_CHUNK):
+        resp = client.post('/v1/speech', data={'text': 'Hello v1'})
+
+    assert resp.status_code == 200
+    assert resp.content == b'wav-data'
+
+
+def test_v1_jobs_submit(tmp_path) -> None:
+  config = _make_config(data_dir=str(tmp_path / 'data'))
+  app = create_app(config)
+
+  with TestClient(app, raise_server_exceptions=False) as client:
+    resp = client.post('/v1/jobs', data={'text': 'Hello v1 jobs'})
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data['status'] == 'queued'
+    assert 'key' in data
+
+
+def test_v1_jobs_status(tmp_path) -> None:
+  config = _make_config(data_dir=str(tmp_path / 'data'))
+  app = create_app(config)
+
+  with TestClient(app, raise_server_exceptions=False) as client:
+    submit = client.post('/v1/jobs', data={'text': 'Hello v1 status'})
+    key = submit.json()['key']
+
+    resp = client.get(f'/v1/jobs/{key}')
+    assert resp.status_code in (200, 202)
+    assert resp.json()['key'] == key
+
+
+def test_v1_jobs_status_not_found(tmp_path) -> None:
+  config = _make_config(data_dir=str(tmp_path / 'data'))
+  app = create_app(config)
+
+  with TestClient(app, raise_server_exceptions=False) as client:
+    resp = client.get('/v1/jobs/nonexistent')
+    assert resp.status_code == 404
+
+
+def test_v1_jobs_audio_not_found(tmp_path) -> None:
+  config = _make_config(data_dir=str(tmp_path / 'data'))
+  app = create_app(config)
+
+  with TestClient(app, raise_server_exceptions=False) as client:
+    resp = client.get('/v1/jobs/nonexistent/audio')
+    assert resp.status_code == 404

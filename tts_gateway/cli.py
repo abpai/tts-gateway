@@ -6,11 +6,20 @@ import argparse
 import logging
 import os
 import sys
+import warnings
 
 from tts_gateway.config import DEFAULT_MODELS_DIR
 
 _NOISY_LOGGERS = ('httpcore', 'httpx', 'urllib3', 'filelock')
 _QUIET_LOGGERS = ('huggingface_hub',)  # suppress HF token nag
+
+
+def _suppress_third_party_warnings() -> None:
+  """Mute noisy torch/kokoro/HF warnings that fire on every import or inference."""
+  warnings.filterwarnings('ignore', category=UserWarning, module=r'torch\.')
+  warnings.filterwarnings('ignore', category=UserWarning, module=r'kokoro\.')
+  warnings.filterwarnings('ignore', category=FutureWarning, module=r'torch\.')
+  warnings.filterwarnings('ignore', message='.*unauthenticated requests.*HF.*')
 
 
 def _configure_logging(debug: bool) -> None:
@@ -42,9 +51,9 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
   )
   parser.add_argument(
     '--format',
-    default='wav',
+    default='mp3',
     choices=['wav', 'mp3'],
-    help='Output audio format (default: wav)',
+    help='Output audio format (default: mp3)',
   )
   parser.add_argument('--voice', default=None, help='Default voice name')
   parser.add_argument('--models-dir', default=None, help='Models directory')
@@ -131,11 +140,12 @@ def _run_serve(args: argparse.Namespace) -> None:
   _set_common_env(args)
   os.environ['TTS_GATEWAY_PORT'] = str(args.port)
   os.environ['TTS_GATEWAY_HOST'] = args.host
+  _suppress_third_party_warnings()
   _configure_logging(args.debug)
 
   import uvicorn
 
-  from tts_gateway.main import create_app
+  from tts_gateway.routes import create_app
 
   app = create_app()
   uvicorn.run(
@@ -148,38 +158,27 @@ def _run_serve(args: argparse.Namespace) -> None:
 
 def _run_worker(args: argparse.Namespace) -> None:
   import asyncio
-  from pathlib import Path
 
   _set_common_env(args)
+  _suppress_third_party_warnings()
   _configure_logging(args.debug)
 
   from tts_gateway.config import load_config
-  from tts_gateway.gateway import TtsGateway
-  from tts_gateway.jobs.store import JobStore
-  from tts_gateway.jobs.worker import run_worker
+  from tts_gateway.runtime import JobRuntime, run_worker_loop
 
   config = load_config()
-  gateway = TtsGateway(config)
-  data_dir = Path(config.data_dir)
-  artifacts_dir = data_dir / 'artifacts'
-  artifacts_dir.mkdir(parents=True, exist_ok=True)
-  store = JobStore(data_dir / 'jobs.db')
+  runtime = JobRuntime(config)
 
   try:
     asyncio.run(
-      run_worker(
-        store,
-        gateway.engine_list(),
-        artifacts_dir,
+      run_worker_loop(
+        runtime,
         poll_seconds=args.poll_interval,
-        concurrency=gateway.chunk_concurrency(),
-        engine_timeout=config.engine_timeout_seconds,
-        ffmpeg_path=config.ffmpeg_path,
         once=args.once,
       )
     )
   finally:
-    store.close()
+    runtime.close()
 
 
 if __name__ == '__main__':
