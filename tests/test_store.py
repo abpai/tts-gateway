@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from tts_gateway.jobs.store import JobStore
 
 
 @pytest.fixture()
-def store(tmp_path) -> JobStore:
+def store(tmp_path) -> Iterator[JobStore]:
   s = JobStore(tmp_path / 'test.db')
   yield s
   s.close()
@@ -133,6 +135,7 @@ def test_failed_job_requeued_on_resubmit(store: JobStore) -> None:
   store.mark_failed('key1', 'engine crashed')
 
   job = store.get('key1')
+  assert job is not None
   assert job.status == 'failed'
 
   # Resubmit same key
@@ -159,6 +162,7 @@ def test_full_lifecycle(store: JobStore) -> None:
   # Encoding
   store.mark_encoding('key1')
   job = store.get('key1')
+  assert job is not None
   assert job.status == 'encoding'
 
   # Ready
@@ -169,5 +173,6 @@ def test_full_lifecycle(store: JobStore) -> None:
     chunks_total=3,
   )
   job = store.get('key1')
+  assert job is not None
   assert job.status == 'ready'
   assert job.chunks_done == 3

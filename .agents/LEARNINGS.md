@@ -11,6 +11,7 @@
 | 2026-03-30 | self | Ran packaging checks against stale files left in `dist/` | In CI and release workflows, `rm -rf dist` before `uv build` so `twine check` only sees the current release artifacts |
 | 2026-03-30 | self | Sent raw markdown documents into Kokoro and hit a line-count runtime error | Normalize markdown-ish input to speech-friendly plain text before chunking so headings, links, emphasis, and raw URLs do not leak into engine input |
 | 2026-04-01 | self | Changed runtime defaults and setup behavior without updating the README | When defaults or bootstrap flows change, update `README.md` config tables, example commands, and `make setup` guidance in the same pass |
+| 2026-04-01 | self | Let `ty` inspect a pytest `yield` fixture as if it returned the yielded object directly, and used direct optional imports in backend code | Annotate `yield` fixtures as `Iterator[T]`, add `assert ... is not None` after nullable fetches, and keep optional backend symbols behind `import_module()` plus local `Protocol` types |
 
 ## User Preferences
 

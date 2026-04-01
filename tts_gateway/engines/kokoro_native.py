@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, MutableMapping
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class _KokoroPipeline(Protocol):
+  voices: MutableMapping[str, Any]
+
   def __call__(
     self,
     text: str,
@@ -35,6 +37,16 @@ class _KokoroModule(Protocol):
     repo_id: str,
     model: Any = ...,
   ) -> _KokoroPipeline: ...
+
+
+class _KModelFactory(Protocol):
+  def __call__(
+    self,
+    *,
+    repo_id: str,
+    config: str,
+    model: str,
+  ) -> Any: ...
 
 
 class _TorchMpsBackend(Protocol):
@@ -95,11 +107,16 @@ class KokoroNativeEngine(LazyNativeEngine):
       logger.info('Using cached model from %s', snapshot_dir)
       config_path = str(snapshot_dir / 'config.json')
       model_path = str(snapshot_dir / KOKORO_MODEL_FILE)
-      from kokoro.model import KModel
+      kokoro_model = import_module('kokoro.model')
+      model_factory = cast(_KModelFactory, kokoro_model.KModel)
 
-      model = KModel(repo_id=KOKORO_REPO_ID, config=config_path, model=model_path)
+      model = model_factory(
+        repo_id=KOKORO_REPO_ID,
+        config=config_path,
+        model=model_path,
+      )
       model = model.to(device).eval()
-      self._pipeline = kokoro.KPipeline(
+      pipeline = kokoro.KPipeline(
         lang_code='a',
         device=device,
         repo_id=KOKORO_REPO_ID,
@@ -110,9 +127,10 @@ class KokoroNativeEngine(LazyNativeEngine):
       if voices_dir.is_dir():
         for voice_file in voices_dir.glob('*.pt'):
           voice_name = voice_file.stem
-          self._pipeline.voices[voice_name] = __import__('torch').load(
+          pipeline.voices[voice_name] = __import__('torch').load(
             str(voice_file), weights_only=True
           )
+      self._pipeline = pipeline
     else:
       self._pipeline = kokoro.KPipeline(
         lang_code='a',
