@@ -4,10 +4,24 @@ import re
 
 SENTENCE_BOUNDARY = re.compile(r'(?<=[.!?])\s+')
 WHITESPACE = re.compile(r'\s+')
+MARKDOWN_LINK = re.compile(r'\[([^\]]+)\]\([^)]+\)')
+RAW_URL = re.compile(r'https?://\S+')
+INLINE_CODE = re.compile(r'`([^`]+)`')
+HEADING_PREFIX = re.compile(r'^\s{0,3}#{1,6}\s*', re.MULTILINE)
+LIST_PREFIX = re.compile(r'^\s*[-*+]\s+', re.MULTILINE)
+ORDERED_LIST_PREFIX = re.compile(r'^\s*\d+\.\s+', re.MULTILINE)
+EMPHASIS_MARK = re.compile(r'(\*\*|__|\*|_)')
 
 
 def normalize_text(text: str) -> str:
-  return WHITESPACE.sub(' ', text).strip()
+  cleaned = MARKDOWN_LINK.sub(r'\1', text)
+  cleaned = INLINE_CODE.sub(r'\1', cleaned)
+  cleaned = RAW_URL.sub('', cleaned)
+  cleaned = HEADING_PREFIX.sub('', cleaned)
+  cleaned = LIST_PREFIX.sub('', cleaned)
+  cleaned = ORDERED_LIST_PREFIX.sub('', cleaned)
+  cleaned = EMPHASIS_MARK.sub('', cleaned)
+  return WHITESPACE.sub(' ', cleaned).strip()
 
 
 def _split_long_segment(segment: str, max_chars: int) -> list[str]:

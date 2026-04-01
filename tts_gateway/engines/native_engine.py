@@ -73,6 +73,12 @@ class LazyNativeEngine(TtsEngine):
       'loadError': self._load_error,
     }
 
+  def required_module_name(self) -> str | None:
+    return None
+
+  def install_hint(self) -> str | None:
+    return None
+
   # ------------------------------------------------------------------
   # Internals
   # ------------------------------------------------------------------
@@ -83,10 +89,7 @@ class LazyNativeEngine(TtsEngine):
     async with self._lock:
       if self._loaded:
         return
-      logger.info(
-        'engine-load-started',
-        extra={'engine': self.name, 'device_mode': self.device_mode},
-      )
+      logger.info('Loading %s engine (device=%s)...', self.name, self.device_mode)
       started = time.perf_counter()
       try:
         loop = asyncio.get_running_loop()
@@ -95,17 +98,32 @@ class LazyNativeEngine(TtsEngine):
         self._load_error = None
         duration_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
-          'engine-load-completed',
-          extra={
-            'engine': self.name,
-            'device': self._device,
-            'duration_ms': duration_ms,
-          },
+          'Loaded %s engine on %s in %dms',
+          self.name,
+          self._device,
+          duration_ms,
         )
       except Exception as exc:
-        self._load_error = str(exc)
-        logger.error(
-          'engine-load-failed',
-          extra={'engine': self.name, 'error': str(exc)},
+        load_error = self._format_load_error(exc)
+        self._load_error = load_error
+        logger.error('Failed to load %s engine: %s', self.name, load_error)
+        raise EngineError(f'{self.name} failed to load: {load_error}') from exc
+
+  def _format_load_error(self, exc: Exception) -> str:
+    if self._is_missing_required_module(exc):
+      hint = self.install_hint()
+      if hint:
+        return (
+          f'missing dependency "{self.required_module_name()}"; install it with: {hint}'
         )
-        raise EngineError(f'{self.name} failed to load: {exc}') from exc
+    return str(exc)
+
+  def _is_missing_required_module(self, exc: Exception) -> bool:
+    if not isinstance(exc, ModuleNotFoundError):
+      return False
+    required_module = self.required_module_name()
+    if required_module is None:
+      return False
+    if exc.name == required_module:
+      return True
+    return f"No module named '{required_module}'" in str(exc)

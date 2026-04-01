@@ -1,6 +1,7 @@
-.PHONY: help install install-dev setup pre-commit-install pre-commit-run lint format typecheck test clean lock-check run docker-build
+.PHONY: help install install-dev setup pre-commit-install pre-commit-run lint format typecheck test clean lock-check run docker-build release release-dry-run
 VENV_DIR = .venv
 PROVIDER ?= kokoro
+BUMP ?= patch
 
 help:
 	@echo 'Available commands:'
@@ -17,8 +18,13 @@ setup: ## Initialize development environment
 		echo 'Creating virtual environment in $(VENV_DIR)...'; \
 		uv venv; \
 	fi
-	@echo 'Installing dependencies...'
-	@uv sync --group dev
+	@echo 'Installing dependencies (dev + all engine extras)...'
+	@uv sync --group dev --extra all
+	@echo 'Installing spaCy model for Kokoro...'
+	@uv pip install --python $(VENV_DIR)/bin/python \
+		en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+	@echo 'Preloading engine models...'
+	@PRELOAD_KOKORO=true PRELOAD_POCKET=true uv run python scripts/preload_models.py || true
 	@echo 'Installing pre-commit hooks...'
 	@uv run pre-commit install
 	@echo '\n✅ Setup complete. To activate the environment, run:\nsource .venv/bin/activate'
@@ -56,3 +62,9 @@ run: ## Run the TTS server
 
 docker-build: ## Build the Docker image locally
 	docker build -t tts-gateway:local .
+
+release: ## Release with default patch bump, or override with BUMP=minor / VERSION=0.1.3
+	uv run python scripts/release.py $(VERSION) --bump $(BUMP)
+
+release-dry-run: ## Preview release flow with default patch bump, or override with BUMP=minor / VERSION=0.1.3
+	uv run python scripts/release.py $(VERSION) --bump $(BUMP) --dry-run

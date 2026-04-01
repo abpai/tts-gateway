@@ -36,3 +36,7 @@ class TtsEngine(ABC):
   @abstractmethod
   async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
     """Generate a PCM chunk from text."""
+
+
+# Alias for the redesign. Both names are exported; old code keeps working.
+Engine = TtsEngine

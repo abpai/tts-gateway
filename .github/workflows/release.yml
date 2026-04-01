@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Verify tag matches package version
+        env:
+          GIT_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          git_tag = os.environ['GIT_TAG']
+          data = tomllib.loads(Path('pyproject.toml').read_text())
+          version = data['project']['version']
+          expected_tag = f'v{version}'
+          if git_tag != expected_tag:
+            raise SystemExit(
+              f'tag {git_tag!r} does not match project.version {version!r}'
+            )
+          print(f'validated release tag {git_tag}')
+          PY
+
+      - name: Build distribution artifacts
+        run: rm -rf dist && uv build
+
+      - name: Validate package metadata
+        run: uvx twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: >
+          gh release create "$GITHUB_REF_NAME"
+          dist/*
+          --generate-notes
+          --verify-tag

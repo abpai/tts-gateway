@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, MutableMapping
 from importlib import import_module
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from tts_gateway.config import DeviceMode, GatewayConfig
@@ -11,10 +12,13 @@ from tts_gateway.engines.native_engine import LazyNativeEngine
 
 SAMPLE_RATE = 24_000
 KOKORO_REPO_ID = 'hexgrad/Kokoro-82M'
+KOKORO_MODEL_FILE = 'kokoro-v1_0.pth'
 logger = logging.getLogger(__name__)
 
 
 class _KokoroPipeline(Protocol):
+  voices: MutableMapping[str, Any]
+
   def __call__(
     self,
     text: str,
@@ -31,7 +35,18 @@ class _KokoroModule(Protocol):
     lang_code: str,
     device: str,
     repo_id: str,
+    model: Any = ...,
   ) -> _KokoroPipeline: ...
+
+
+class _KModelFactory(Protocol):
+  def __call__(
+    self,
+    *,
+    repo_id: str,
+    config: str,
+    model: str,
+  ) -> Any: ...
 
 
 class _TorchMpsBackend(Protocol):
@@ -63,6 +78,12 @@ class KokoroNativeEngine(LazyNativeEngine):
     )
     self._pipeline: _KokoroPipeline | None = None
 
+  def required_module_name(self) -> str | None:
+    return 'kokoro'
+
+  def install_hint(self) -> str | None:
+    return 'uv sync --group dev --extra kokoro'
+
   # ------------------------------------------------------------------
   # LazyNativeEngine contract
   # ------------------------------------------------------------------
@@ -70,19 +91,66 @@ class KokoroNativeEngine(LazyNativeEngine):
   def _load_model(self) -> None:
     import os
 
+    hf_home = os.path.join(self.models_dir, 'huggingface')
     # Side-effect: sets HF_HOME so Hugging Face Hub caches models under
     # the configured models_dir rather than the default ~/.cache/huggingface.
-    os.environ.setdefault('HF_HOME', os.path.join(self.models_dir, 'huggingface'))
+    os.environ.setdefault('HF_HOME', hf_home)
 
     device = self._resolve_device(self.device_mode)
     self._device = device
 
     kokoro = cast(_KokoroModule, import_module('kokoro'))
-    self._pipeline = kokoro.KPipeline(
-      lang_code='a',
-      device=device,
-      repo_id=KOKORO_REPO_ID,
-    )
+
+    # Use cached model files directly if available, avoiding HF network calls.
+    snapshot_dir = self._find_cached_snapshot(Path(hf_home))
+    if snapshot_dir:
+      logger.info('Using cached model from %s', snapshot_dir)
+      config_path = str(snapshot_dir / 'config.json')
+      model_path = str(snapshot_dir / KOKORO_MODEL_FILE)
+      kokoro_model = import_module('kokoro.model')
+      model_factory = cast(_KModelFactory, kokoro_model.KModel)
+
+      model = model_factory(
+        repo_id=KOKORO_REPO_ID,
+        config=config_path,
+        model=model_path,
+      )
+      model = model.to(device).eval()
+      pipeline = kokoro.KPipeline(
+        lang_code='a',
+        device=device,
+        repo_id=KOKORO_REPO_ID,
+        model=model,
+      )
+      # Preload cached voice files so load_single_voice skips hf_hub_download
+      voices_dir = snapshot_dir / 'voices'
+      if voices_dir.is_dir():
+        for voice_file in voices_dir.glob('*.pt'):
+          voice_name = voice_file.stem
+          pipeline.voices[voice_name] = __import__('torch').load(
+            str(voice_file), weights_only=True
+          )
+      self._pipeline = pipeline
+    else:
+      self._pipeline = kokoro.KPipeline(
+        lang_code='a',
+        device=device,
+        repo_id=KOKORO_REPO_ID,
+      )
+
+  @staticmethod
+  def _find_cached_snapshot(hf_home: Path) -> Path | None:
+    """Find the latest HF Hub snapshot dir for Kokoro, if it exists."""
+    snapshots_dir = hf_home / 'hub' / 'models--hexgrad--Kokoro-82M' / 'snapshots'
+    if not snapshots_dir.is_dir():
+      return None
+    # Pick the first snapshot that has both config.json and the model file
+    for snapshot in sorted(snapshots_dir.iterdir()):
+      if (snapshot / 'config.json').exists() and (
+        snapshot / KOKORO_MODEL_FILE
+      ).exists():
+        return snapshot
+    return None
 
   def _run_inference(self, text: str, voice: str | None = None) -> AudioChunk:
     import numpy as np
