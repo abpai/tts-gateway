@@ -96,6 +96,8 @@ def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
   assert cfg.device_mode == 'auto'
   assert cfg.output_format == 'wav'
   assert cfg.chunk_max_chars == 500
+  assert cfg.stream_first_chunk_max_chars == 180
+  assert cfg.stream_chunk_max_chars == 500
   assert cfg.request_timeout_seconds == 3600
   assert cfg.fallback_engine is None
   assert cfg.default_voice is None
@@ -103,15 +105,38 @@ def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
   assert cfg.bind_port == 8000
 
 
+def test_load_config_stream_chunk_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+  _set_minimal_env(
+    monkeypatch,
+    TTS_CHUNK_MAX_CHARS='700',
+    TTS_STREAM_FIRST_CHUNK_MAX_CHARS='120',
+    TTS_STREAM_CHUNK_MAX_CHARS='450',
+  )
+  cfg = load_config()
+  assert cfg.chunk_max_chars == 700
+  assert cfg.stream_first_chunk_max_chars == 120
+  assert cfg.stream_chunk_max_chars == 450
+
+
 def test_load_config_both_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
   _set_minimal_env(
     monkeypatch,
     KOKORO_TTS_ENABLED='false',
     POCKET_TTS_ENABLED='false',
+    COSYVOICE_TTS_ENABLED='false',
   )
   cfg = load_config()
   assert cfg.kokoro_enabled is False
   assert cfg.pocket_enabled is False
+  assert cfg.cosyvoice_enabled is False
+
+
+def test_load_config_cosyvoice_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+  _set_minimal_env(monkeypatch)
+  cfg = load_config()
+  assert cfg.cosyvoice_enabled is False
+  assert cfg.cosyvoice_base_url == 'http://127.0.0.1:50000'
+  assert cfg.cosyvoice_request_timeout_seconds == cfg.engine_timeout_seconds
 
 
 def test_load_config_default_voice(monkeypatch: pytest.MonkeyPatch) -> None:

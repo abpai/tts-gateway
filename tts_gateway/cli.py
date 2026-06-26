@@ -38,10 +38,16 @@ def _configure_logging(debug: bool) -> None:
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
   """Add flags shared between serve and worker subcommands."""
   parser.add_argument(
-    '--provider', required=True, choices=['kokoro', 'pocket'], help='Primary TTS engine'
+    '--provider',
+    required=True,
+    choices=['kokoro', 'pocket', 'cosyvoice'],
+    help='Primary TTS engine',
   )
   parser.add_argument(
-    '--fallback', default='none', help='Fallback engine (default: none)'
+    '--fallback',
+    default='none',
+    choices=['none', 'kokoro', 'pocket', 'cosyvoice'],
+    help='Fallback engine (default: none)',
   )
   parser.add_argument(
     '--device',
@@ -82,6 +88,9 @@ def _set_common_env(args: argparse.Namespace) -> None:
   ).lower()
   os.environ['POCKET_TTS_ENABLED'] = str(
     args.provider == 'pocket' or args.fallback == 'pocket'
+  ).lower()
+  os.environ['COSYVOICE_TTS_ENABLED'] = str(
+    args.provider == 'cosyvoice' or args.fallback == 'cosyvoice'
   ).lower()
 
   if args.models_dir:

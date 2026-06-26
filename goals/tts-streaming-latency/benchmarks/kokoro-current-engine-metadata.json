@@ -1,0 +1,488 @@
+{
+  "generatedAt": "2026-06-26T17:59:56.703480+00:00",
+  "baseUrl": "http://127.0.0.1:45125",
+  "engine": "kokoro",
+  "condition": "warm",
+  "warmupRequested": true,
+  "cacheBustToken": "20260626T175908123029Z",
+  "repeat": 1,
+  "speechEndpoint": "/v1/speech",
+  "streamEndpoints": [
+    "/tts/stream",
+    "/tts/stream/pcm"
+  ],
+  "compareBaseline": "goals/tts-streaming-latency/benchmarks/kokoro-baseline.json",
+  "health": {
+    "ok": true,
+    "status": 200,
+    "primaryEngine": "kokoro",
+    "fallbackEngine": null,
+    "engineChain": [
+      "kokoro"
+    ],
+    "streamFirstChunkMaxChars": 180,
+    "streamChunkMaxChars": 500,
+    "engines": {
+      "kokoro": {
+        "mode": "native",
+        "enabled": true,
+        "loaded": true,
+        "device": "mps",
+        "loadError": null
+      },
+      "pocket": {
+        "mode": "disabled"
+      },
+      "cosyvoice": {
+        "mode": "disabled"
+      }
+    }
+  },
+  "warnings": [],
+  "fixtures": [
+    {
+      "id": "short",
+      "label": "Short",
+      "chars": 73,
+      "textHash": "110a0acf4004b6abada6a47f47edd372de69b906fe2ab89604ce2b97ed6165e1"
+    },
+    {
+      "id": "sentence",
+      "label": "Sentence",
+      "chars": 183,
+      "textHash": "481821bd2dd9950364e278849089bbca645e6f6bfdb260ee56ae237bf09e7bdc"
+    },
+    {
+      "id": "medium",
+      "label": "Medium",
+      "chars": 263,
+      "textHash": "a2c2ee2ce08ba976e9914578f4e0aa88901870ee8dbdb05c100c8d33c4800af1"
+    },
+    {
+      "id": "long",
+      "label": "Long",
+      "chars": 2272,
+      "textHash": "972b5ca08f483e13c8e1f3accf0ca60f7f2b807f30afa6f26cfb79073cb4bc62"
+    },
+    {
+      "id": "markdown",
+      "label": "Markdown",
+      "chars": 288,
+      "textHash": "d6a36411c140d8169713270cb07cf436bbc4e74c43d2de3b48b855443057eb70"
+    }
+  ],
+  "runs": [
+    {
+      "fixtureId": "short",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 202029,
+      "firstByteMs": 1592.344,
+      "totalMs": 1592.85,
+      "error": null
+    },
+    {
+      "fixtureId": "short",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 202029,
+      "firstByteMs": 768.868,
+      "totalMs": 769.196,
+      "error": null
+    },
+    {
+      "fixtureId": "short",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/raw",
+      "bytesRead": 602400,
+      "firstByteMs": 621.439,
+      "totalMs": 621.866,
+      "error": null
+    },
+    {
+      "fixtureId": "sentence",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 301485,
+      "firstByteMs": 1833.032,
+      "totalMs": 1833.675,
+      "error": null
+    },
+    {
+      "fixtureId": "sentence",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 309978,
+      "firstByteMs": 2289.961,
+      "totalMs": 2385.241,
+      "error": null
+    },
+    {
+      "fixtureId": "sentence",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/raw",
+      "bytesRead": 921600,
+      "firstByteMs": 883.912,
+      "totalMs": 1242.786,
+      "error": null
+    },
+    {
+      "fixtureId": "medium",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 376749,
+      "firstByteMs": 2006.948,
+      "totalMs": 2007.788,
+      "error": null
+    },
+    {
+      "fixtureId": "medium",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 389850,
+      "firstByteMs": 1055.637,
+      "totalMs": 2603.42,
+      "error": null
+    },
+    {
+      "fixtureId": "medium",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/raw",
+      "bytesRead": 1161600,
+      "firstByteMs": 626.159,
+      "totalMs": 1372.936,
+      "error": null
+    },
+    {
+      "fixtureId": "long",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 2269869,
+      "firstByteMs": 10324.705,
+      "totalMs": 10329.912,
+      "error": null
+    },
+    {
+      "fixtureId": "long",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 2290107,
+      "firstByteMs": 1256.647,
+      "totalMs": 9357.836,
+      "error": null
+    },
+    {
+      "fixtureId": "long",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/raw",
+      "bytesRead": 6838800,
+      "firstByteMs": 720.984,
+      "totalMs": 9427.985,
+      "error": null
+    },
+    {
+      "fixtureId": "markdown",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 341037,
+      "firstByteMs": 1776.406,
+      "totalMs": 1777.311,
+      "error": null
+    },
+    {
+      "fixtureId": "markdown",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/mpeg",
+      "bytesRead": 351834,
+      "firstByteMs": 1753.468,
+      "totalMs": 1867.485,
+      "error": null
+    },
+    {
+      "fixtureId": "markdown",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "iteration": 1,
+      "status": 200,
+      "ok": true,
+      "contentType": "audio/raw",
+      "bytesRead": 1046400,
+      "firstByteMs": 1336.579,
+      "totalMs": 1387.233,
+      "error": null
+    }
+  ],
+  "summary": [
+    {
+      "fixtureId": "long",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 1256.647,
+      "totalMsMedian": 9357.836
+    },
+    {
+      "fixtureId": "long",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 720.984,
+      "totalMsMedian": 9427.985
+    },
+    {
+      "fixtureId": "long",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 10324.705,
+      "totalMsMedian": 10329.912
+    },
+    {
+      "fixtureId": "markdown",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 1753.468,
+      "totalMsMedian": 1867.485
+    },
+    {
+      "fixtureId": "markdown",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 1336.579,
+      "totalMsMedian": 1387.233
+    },
+    {
+      "fixtureId": "markdown",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 1776.406,
+      "totalMsMedian": 1777.311
+    },
+    {
+      "fixtureId": "medium",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 1055.637,
+      "totalMsMedian": 2603.42
+    },
+    {
+      "fixtureId": "medium",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 626.159,
+      "totalMsMedian": 1372.936
+    },
+    {
+      "fixtureId": "medium",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 2006.948,
+      "totalMsMedian": 2007.788
+    },
+    {
+      "fixtureId": "sentence",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 2289.961,
+      "totalMsMedian": 2385.241
+    },
+    {
+      "fixtureId": "sentence",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 883.912,
+      "totalMsMedian": 1242.786
+    },
+    {
+      "fixtureId": "sentence",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 1833.032,
+      "totalMsMedian": 1833.675
+    },
+    {
+      "fixtureId": "short",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 768.868,
+      "totalMsMedian": 769.196
+    },
+    {
+      "fixtureId": "short",
+      "endpoint": "/tts/stream/pcm",
+      "kind": "stream",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 621.439,
+      "totalMsMedian": 621.866
+    },
+    {
+      "fixtureId": "short",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "samples": 1,
+      "okSamples": 1,
+      "firstByteMsMedian": 1592.344,
+      "totalMsMedian": 1592.85
+    }
+  ],
+  "comparisons": [
+    {
+      "fixtureId": "long",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "firstByteDeltaMs": -4655.654,
+      "totalDeltaMs": 12.684
+    },
+    {
+      "fixtureId": "long",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "firstByteDeltaMs": 699.688,
+      "totalDeltaMs": 701.775
+    },
+    {
+      "fixtureId": "markdown",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "firstByteDeltaMs": 425.773,
+      "totalDeltaMs": 539.412
+    },
+    {
+      "fixtureId": "markdown",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "firstByteDeltaMs": 178.385,
+      "totalDeltaMs": 178.606
+    },
+    {
+      "fixtureId": "medium",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "firstByteDeltaMs": -293.616,
+      "totalDeltaMs": 1252.174
+    },
+    {
+      "fixtureId": "medium",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "firstByteDeltaMs": 244.437,
+      "totalDeltaMs": 244.504
+    },
+    {
+      "fixtureId": "sentence",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "firstByteDeltaMs": 1193.679,
+      "totalDeltaMs": 1288.431
+    },
+    {
+      "fixtureId": "sentence",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "firstByteDeltaMs": 405.52,
+      "totalDeltaMs": 406.059
+    },
+    {
+      "fixtureId": "short",
+      "endpoint": "/tts/stream",
+      "kind": "stream",
+      "firstByteDeltaMs": -76.586,
+      "totalDeltaMs": -76.58
+    },
+    {
+      "fixtureId": "short",
+      "endpoint": "/v1/speech",
+      "kind": "speech",
+      "firstByteDeltaMs": -210.407,
+      "totalDeltaMs": -210.646
+    }
+  ],
+  "warmup": {
+    "ok": true,
+    "status": 200,
+    "content_type": "application/json",
+    "bytes_read": 63,
+    "first_byte_ms": 0.926,
+    "total_ms": 0.927
+  }
+}

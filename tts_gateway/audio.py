@@ -15,6 +15,20 @@ SAMPLE_FORMAT_BY_WIDTH = {
   4: 's32',
 }
 
+PCM_FORMAT_BY_WIDTH = {
+  1: 'u8',
+  2: 's16le',
+  4: 's32le',
+}
+
+
+def pcm_format_le(sample_width: int) -> str:
+  """Return little-endian PCM format label for raw stream clients."""
+  fmt = PCM_FORMAT_BY_WIDTH.get(sample_width)
+  if fmt is None:
+    raise RuntimeError(f'unsupported sample width for PCM stream: {sample_width}')
+  return fmt
+
 
 def wav_bytes_to_chunk(payload: bytes) -> AudioChunk:
   with wave.open(BytesIO(payload), 'rb') as wav_reader:

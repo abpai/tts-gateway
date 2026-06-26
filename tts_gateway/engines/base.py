@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, TypeGuard, runtime_checkable
 
 import numpy as np
 
@@ -36,6 +37,23 @@ class TtsEngine(ABC):
   @abstractmethod
   async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
     """Generate a PCM chunk from text."""
+
+
+@runtime_checkable
+class StreamingTtsEngine(Protocol):
+  """Engine that yields incremental PCM chunks for a full text input."""
+
+  name: str
+
+  def stream_synthesize(
+    self, text: str, *, voice: str | None = None
+  ) -> AsyncGenerator[AudioChunk, None]:
+    """Yield ordered PCM chunks for text without gateway-side pre-chunking."""
+
+
+def supports_streaming(engine: TtsEngine) -> TypeGuard[StreamingTtsEngine]:
+  """Return True when engine exposes native streaming synthesis."""
+  return isinstance(engine, StreamingTtsEngine)
 
 
 # Alias for the redesign. Both names are exported; old code keeps working.

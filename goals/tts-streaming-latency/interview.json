@@ -1,0 +1,139 @@
+{
+  "stage": "interview",
+  "title": "TTS Streaming Latency Goal Setup",
+  "goalSlug": "tts-streaming-latency",
+  "questions": [
+    {
+      "id": "scope",
+      "prompt": "What should this goal include?",
+      "description": "The recommended scope keeps the work grounded in the Option+R latency problem while leaving room for the CosyVoice-ready abstraction.",
+      "answerMode": "multi-custom",
+      "recommendedAnswer": "Include benchmark scripts, Raycast streaming playback for tts-gateway, gateway stream first-chunk tuning, tests for streaming behavior, and a final streaming-engine abstraction plan that can support CosyVoice elegantly. Do not implement CosyVoice itself unless the baseline streaming work plateaus and a separate prototype proves it is worth the operational cost.",
+      "recommendedOptionIds": [
+        "benchmarks",
+        "raycast_streaming",
+        "gateway_stream_tuning",
+        "streaming_tests",
+        "cosyvoice_abstraction"
+      ],
+      "options": [
+        {
+          "id": "benchmarks",
+          "label": "Benchmark scripts"
+        },
+        {
+          "id": "raycast_streaming",
+          "label": "Raycast streaming playback"
+        },
+        {
+          "id": "gateway_stream_tuning",
+          "label": "Gateway first-chunk tuning"
+        },
+        {
+          "id": "streaming_tests",
+          "label": "Streaming tests"
+        },
+        {
+          "id": "cosyvoice_abstraction",
+          "label": "CosyVoice-ready abstraction"
+        },
+        {
+          "id": "cosyvoice_implementation",
+          "label": "CosyVoice implementation"
+        }
+      ],
+      "required": true
+    },
+    {
+      "id": "success_metrics",
+      "prompt": "What should count as success for latency?",
+      "description": "These targets are meant as optimization gates, not brittle unit-test thresholds.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Use repeatable benchmark output as the source of truth. For warm Kokoro on this Mac, target end-to-end first audible audio at roughly <=400ms for short snippets, <=700ms for sentence-length text, and at least a 30% server TTFA improvement for long selections versus the current /tts/stream baseline. Preserve total playback time unless a tradeoff is explicitly documented.",
+      "recommendedOptionIds": [
+        "measured_targets"
+      ],
+      "options": [
+        {
+          "id": "measured_targets",
+          "label": "Measured latency targets"
+        },
+        {
+          "id": "best_effort",
+          "label": "Best-effort improvement"
+        },
+        {
+          "id": "strict_thresholds",
+          "label": "Strict pass/fail thresholds"
+        }
+      ],
+      "required": true
+    },
+    {
+      "id": "fallbacks",
+      "prompt": "Which fallback behavior should be preserved?",
+      "description": "Streaming should not break existing non-default preferences or generic TTS-server support.",
+      "answerMode": "multi-custom",
+      "recommendedAnswer": "Preserve the current buffered path for custom endpoints, missing ffplay, save-audio mode, speed changes, output-format conversion, and any failed streaming setup. Stop Audio should terminate playback and abort the in-flight stream request.",
+      "recommendedOptionIds": [
+        "custom_endpoints",
+        "missing_ffplay",
+        "save_audio",
+        "speed_format",
+        "abort_on_stop"
+      ],
+      "options": [
+        {
+          "id": "custom_endpoints",
+          "label": "Custom endpoints"
+        },
+        {
+          "id": "missing_ffplay",
+          "label": "Missing ffplay"
+        },
+        {
+          "id": "save_audio",
+          "label": "Save-audio mode"
+        },
+        {
+          "id": "speed_format",
+          "label": "Speed/format conversion"
+        },
+        {
+          "id": "abort_on_stop",
+          "label": "Abort stream on stop"
+        }
+      ],
+      "required": true
+    },
+    {
+      "id": "cosyvoice_shape",
+      "prompt": "How should CosyVoice appear in this goal?",
+      "description": "The clean design is likely a sidecar-backed streaming engine capability, but that can be planned separately from actually operating the model.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Make the final phase define and test a capability-based streaming engine abstraction that can host CosyVoice as a sidecar-backed engine. Include a prototype plan and acceptance gates, but defer full CosyVoice implementation until tuned Kokoro streaming has been benchmarked.",
+      "recommendedOptionIds": [
+        "abstraction_and_proto_plan"
+      ],
+      "options": [
+        {
+          "id": "abstraction_and_proto_plan",
+          "label": "Abstraction plus prototype plan"
+        },
+        {
+          "id": "implement_cosyvoice",
+          "label": "Implement CosyVoice now"
+        },
+        {
+          "id": "document_only",
+          "label": "Document only"
+        },
+        {
+          "id": "exclude_cosyvoice",
+          "label": "Exclude CosyVoice"
+        }
+      ],
+      "required": true
+    }
+  ]
+}

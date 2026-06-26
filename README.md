@@ -2,7 +2,7 @@
 
 A local text-to-speech gateway with a pluggable engine architecture. New open-source voice models ship constantly; tts-gateway gives clients a stable HTTP API with canonical `POST /v1/speech` and `POST /v1/jobs` endpoints, while retaining legacy `/tts` compatibility shims so swapping or adding models means implementing a small engine class, not rewiring your workflow.
 
-Currently supports [Kokoro](https://github.com/hexgrad/kokoro) and [Pocket TTS](https://github.com/kyutai-labs/pocket-tts). Each engine runs natively in-process.
+Currently supports [Kokoro](https://github.com/hexgrad/kokoro) and [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) as native in-process engines, plus [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) via an optional HTTP sidecar. See [goals/tts-streaming-latency/cosyvoice-sidecar.md](goals/tts-streaming-latency/cosyvoice-sidecar.md) for the sidecar contract and env vars.
 
 ## Install
 
@@ -111,7 +111,16 @@ curl -X POST http://localhost:8000/tts/stream \
   -H 'Content-Type: application/json' \
   -d '{"text":"Hello world"}' \
   -o output.mp3
+
+# Raw PCM streaming (preferred for Raycast to avoid multi-chunk MP3 boundary risk)
+curl -X POST http://localhost:8000/tts/stream/pcm \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Hello world"}' \
+  -o output.pcm
 ```
+
+Raycast uses PCM-first streaming (`/tts/stream/pcm`) so playback can start on the
+first raw PCM chunk without stitching independent MP3 frames at chunk joins.
 
 Check server status:
 
@@ -160,8 +169,8 @@ All settings can be controlled via environment variables. CLI flags take precede
 
 | Variable                      | Default                       | Description                                    |
 | ----------------------------- | ----------------------------- | ---------------------------------------------- |
-| `TTS_PRIMARY_ENGINE`          | `kokoro`                      | Primary engine: `kokoro` or `pocket`           |
-| `TTS_FALLBACK_ENGINE`         | `none`                        | Fallback engine: `kokoro`, `pocket`, or `none` |
+| `TTS_PRIMARY_ENGINE`          | `kokoro`                      | Primary engine: `kokoro`, `pocket`, or `cosyvoice` |
+| `TTS_FALLBACK_ENGINE`         | `none`                        | Fallback engine: `kokoro`, `pocket`, `cosyvoice`, or `none` |
 | `TTS_OUTPUT_FORMAT`           | `mp3`                         | Output audio format: `wav` or `mp3`            |
 | `TTS_DEVICE_MODE`             | `auto`                        | Torch device: `auto`, `cpu`, `mps`, `cuda`     |
 | `TTS_DEFAULT_VOICE`           | _(none)_                      | Default voice name                             |
@@ -169,6 +178,8 @@ All settings can be controlled via environment variables. CLI flags take precede
 | `TTS_GATEWAY_HOST`            | `127.0.0.1`                   | Bind address                                   |
 | `TTS_GATEWAY_PORT`            | `8000`                        | Bind port                                      |
 | `TTS_CHUNK_MAX_CHARS`         | `500`                         | Max characters per chunk                       |
+| `TTS_STREAM_FIRST_CHUNK_MAX_CHARS` | `180`                  | Max characters in the first stream chunk (time-to-first-audio) |
+| `TTS_STREAM_CHUNK_MAX_CHARS`  | _(same as chunk max)_         | Max characters per subsequent stream chunk     |
 | `TTS_REQUEST_TIMEOUT_SECONDS` | `3600`                        | Total request timeout                          |
 | `TTS_ENGINE_TIMEOUT_SECONDS`  | `360`                         | Per-engine call timeout                        |
 | `TTS_FFMPEG_PATH`             | `ffmpeg`                      | Path to ffmpeg binary (for MP3 encoding)       |
@@ -177,6 +188,9 @@ All settings can be controlled via environment variables. CLI flags take precede
 | `TTS_WORKER_POLL_SECONDS`     | `1.0`                         | Background worker poll interval                |
 | `KOKORO_TTS_ENABLED`          | `true`                        | Enable/disable Kokoro engine                   |
 | `POCKET_TTS_ENABLED`          | `false`                       | Enable/disable Pocket TTS engine               |
+| `COSYVOICE_TTS_ENABLED`       | `false`                       | Enable/disable CosyVoice sidecar engine        |
+| `TTS_COSYVOICE_BASE_URL`      | `http://127.0.0.1:50000`      | CosyVoice sidecar base URL                     |
+| `TTS_COSYVOICE_REQUEST_TIMEOUT_SECONDS` | _(engine timeout)_  | CosyVoice sidecar request timeout              |
 
 ## Development
 

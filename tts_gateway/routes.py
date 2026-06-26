@@ -1,7 +1,7 @@
 """FastAPI routes for the TTS gateway.
 
 Canonical API:       /v1/jobs, /v1/jobs/{key}, /v1/jobs/{key}/audio, /v1/speech
-Streaming:           /tts/stream
+Streaming:           /tts/stream, /tts/stream/pcm
 Legacy shims:        /tts, /tts/sync, /tts/{key}, /tts/{key}/audio
 Infrastructure:      /health, /warmup
 """
@@ -11,20 +11,37 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Annotated, Any
 
 from fastapi import Body, FastAPI, Form, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from tts_gateway.audio import pcm_format_le
 from tts_gateway.config import GatewayConfig, load_config
-from tts_gateway.render import stream_audio
+from tts_gateway.engines.base import AudioChunk
+from tts_gateway.render import stream_audio, stream_pcm
 from tts_gateway.runtime import JobRuntime, NoEnginesError, run_worker_loop
 from tts_gateway.types import JobView
 
 logger = logging.getLogger(__name__)
+
+_CLIENT_CLOSED_STATUS = 499
+
+
+async def abort_on_client_disconnect(
+  request: Request,
+  *,
+  stream: AsyncGenerator[Any, None] | None = None,
+) -> Response | None:
+  """Return 499 when the client disconnected; optionally close an open stream."""
+  if not await request.is_disconnected():
+    return None
+  if stream is not None:
+    await stream.aclose()
+  return Response(status_code=_CLIENT_CLOSED_STATUS)
 
 
 def _job_response(view: JobView) -> dict[str, Any]:
@@ -104,6 +121,8 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       'outputFormat': config.output_format,
       'chunkConcurrency': runtime.concurrency,
       'chunkMaxChars': config.chunk_max_chars,
+      'streamFirstChunkMaxChars': config.stream_first_chunk_max_chars,
+      'streamChunkMaxChars': config.stream_chunk_max_chars,
       'requestTimeoutSeconds': config.request_timeout_seconds,
       'engineTimeoutSeconds': config.engine_timeout_seconds,
       'defaultVoice': config.default_voice,
@@ -220,11 +239,7 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
   # Streaming TTS
   # -----------------------------------------------------------------------
 
-  @app.post('/tts/stream')
-  async def tts_stream(
-    text: Annotated[str, Body()],
-    voice: Annotated[str | None, Body()] = None,
-  ) -> Response:
+  def _prepare_stream_request(text: str) -> tuple[str, list] | JSONResponse:
     normalized = text.strip()
     if not normalized:
       return JSONResponse(
@@ -237,12 +252,46 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
         status_code=503,
         content={'error': 'all engines in chain are unavailable'},
       )
+    return normalized, engines
+
+  async def _prepend_first(
+    first: bytes, rest: AsyncGenerator[bytes, None]
+  ) -> AsyncIterator[bytes]:
+    try:
+      yield first
+      async for chunk in rest:
+        yield chunk
+    finally:
+      await rest.aclose()
+
+  async def _pcm_bytes(
+    first: AudioChunk, rest: AsyncGenerator[AudioChunk, None]
+  ) -> AsyncIterator[bytes]:
+    try:
+      yield first.pcm_bytes
+      async for chunk in rest:
+        yield chunk.pcm_bytes
+    finally:
+      await rest.aclose()
+
+  @app.post('/tts/stream')
+  async def tts_stream(
+    request: Request,
+    text: Annotated[str, Body()],
+    voice: Annotated[str | None, Body()] = None,
+  ) -> Response:
+    prepared = _prepare_stream_request(text)
+    if isinstance(prepared, JSONResponse):
+      return prepared
+    normalized, engines = prepared
+
+    if abort := await abort_on_client_disconnect(request):
+      return abort
 
     spec = runtime.make_spec(normalized, voice=voice)
-    from dataclasses import replace
-
     spec = replace(spec, output_format='mp3')
 
+    audio_stream: AsyncGenerator[bytes, None] | None = None
     try:
       audio_stream = stream_audio(
         spec,
@@ -250,20 +299,31 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
         concurrency=runtime.concurrency,
         engine_timeout=config.engine_timeout_seconds,
         ffmpeg_path=config.ffmpeg_path,
+        stream_first_chunk_max_chars=config.stream_first_chunk_max_chars,
+        stream_chunk_max_chars=config.stream_chunk_max_chars,
       )
       first_chunk = await audio_stream.__anext__()
+    except TimeoutError:
+      if audio_stream is not None:
+        await audio_stream.aclose()
+      return JSONResponse(
+        status_code=504,
+        content={'error': 'stream first audio timed out'},
+      )
     except RuntimeError as exc:
+      if audio_stream is not None:
+        await audio_stream.aclose()
       return JSONResponse(status_code=502, content={'error': str(exc)})
     except StopAsyncIteration:
+      if audio_stream is not None:
+        await audio_stream.aclose()
       return JSONResponse(
         status_code=502,
         content={'error': 'synthesis produced no audio'},
       )
 
-    async def _prepend_first(first: bytes, rest: AsyncIterator[bytes]):
-      yield first
-      async for chunk in rest:
-        yield chunk
+    if abort := await abort_on_client_disconnect(request, stream=audio_stream):
+      return abort
 
     return StreamingResponse(
       _prepend_first(first_chunk, audio_stream),
@@ -271,6 +331,69 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       headers={
         'X-TTS-Mode': 'stream',
         'X-TTS-Primary-Engine': config.primary_engine,
+      },
+    )
+
+  @app.post('/tts/stream/pcm')
+  async def tts_stream_pcm(
+    request: Request,
+    text: Annotated[str, Body()],
+    voice: Annotated[str | None, Body()] = None,
+  ) -> Response:
+    prepared = _prepare_stream_request(text)
+    if isinstance(prepared, JSONResponse):
+      return prepared
+    normalized, engines = prepared
+
+    if abort := await abort_on_client_disconnect(request):
+      return abort
+
+    spec = runtime.make_spec(normalized, voice=voice)
+    pcm_chunks: AsyncGenerator[AudioChunk, None] | None = None
+
+    try:
+      first_chunk, pcm_chunks = await stream_pcm(
+        spec,
+        engines,
+        concurrency=runtime.concurrency,
+        engine_timeout=config.engine_timeout_seconds,
+        ffmpeg_path=config.ffmpeg_path,
+        stream_first_chunk_max_chars=config.stream_first_chunk_max_chars,
+        stream_chunk_max_chars=config.stream_chunk_max_chars,
+      )
+      pcm_format = pcm_format_le(first_chunk.sample_width)
+    except TimeoutError:
+      if pcm_chunks is not None:
+        await pcm_chunks.aclose()
+      return JSONResponse(
+        status_code=504,
+        content={'error': 'stream first audio timed out'},
+      )
+    except RuntimeError as exc:
+      if pcm_chunks is not None:
+        await pcm_chunks.aclose()
+      return JSONResponse(status_code=502, content={'error': str(exc)})
+    except StopAsyncIteration:
+      if pcm_chunks is not None:
+        await pcm_chunks.aclose()
+      return JSONResponse(
+        status_code=502,
+        content={'error': 'synthesis produced no audio'},
+      )
+
+    if abort := await abort_on_client_disconnect(request, stream=pcm_chunks):
+      return abort
+
+    return StreamingResponse(
+      _pcm_bytes(first_chunk, pcm_chunks),
+      media_type='audio/raw',
+      headers={
+        'X-TTS-Mode': 'stream-pcm',
+        'X-TTS-Primary-Engine': config.primary_engine,
+        'X-TTS-Sample-Rate': str(first_chunk.sample_rate),
+        'X-TTS-Channels': str(first_chunk.channels),
+        'X-TTS-Sample-Width': str(first_chunk.sample_width),
+        'X-TTS-Pcm-Format': pcm_format,
       },
     )
 

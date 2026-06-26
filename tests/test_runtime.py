@@ -32,6 +32,7 @@ def test_make_spec_defaults(tmp_path) -> None:
   assert spec.voice == ''
   assert spec.output_format == 'wav'
   assert spec.chunk_max_chars == 3000  # from _BASE_CONFIG
+  assert spec.cache_namespace == 'engines=kokoro'
   rt.close()
 
 
@@ -126,6 +127,34 @@ async def test_run_until_complete_cached(tmp_path) -> None:
   assert len(engine.calls) == calls_after_first
   assert a1.output_path == a2.output_path
   rt.close()
+
+
+@pytest.mark.asyncio
+async def test_run_until_complete_cache_partitions_engine_chain(tmp_path) -> None:
+  data_dir = str(tmp_path / 'data')
+  kokoro = _runtime(tmp_path, data_dir=data_dir)
+  cosyvoice = _runtime(
+    tmp_path,
+    data_dir=data_dir,
+    primary_engine='cosyvoice',
+    kokoro_enabled=False,
+    cosyvoice_enabled=True,
+    cosyvoice_base_url='http://127.0.0.1:50000',
+  )
+  kokoro_engine = MockEngine('kokoro')
+  cosyvoice_engine = MockEngine('cosyvoice')
+  _inject_engines(kokoro, [kokoro_engine])
+  _inject_engines(cosyvoice, [cosyvoice_engine])
+
+  kokoro_artifact = await kokoro.run_until_complete(kokoro.make_spec('hello'))
+  cosyvoice_artifact = await cosyvoice.run_until_complete(cosyvoice.make_spec('hello'))
+
+  assert kokoro_artifact.request_hash != cosyvoice_artifact.request_hash
+  assert kokoro_artifact.output_path != cosyvoice_artifact.output_path
+  assert len(kokoro_engine.calls) == 1
+  assert len(cosyvoice_engine.calls) == 1
+  kokoro.close()
+  cosyvoice.close()
 
 
 @pytest.mark.asyncio

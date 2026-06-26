@@ -1,0 +1,74 @@
+{
+  "facts": [
+    {
+      "id": "benchmark-baseline",
+      "text": "The project includes a repeatable latency benchmark script that records JSON results for warm and cold TTS runs across short, sentence-length, medium, and long text fixtures.",
+      "comment": "",
+      "recommendedAutomatedVerification": true,
+      "automatedVerification": true
+    },
+    {
+      "id": "benchmark-coverage",
+      "text": "The benchmark script measures /v1/speech total time, /tts/stream time to first byte, /tts/stream total time, and any new streaming transport or CosyVoice endpoint added by this goal.",
+      "comment": "",
+      "recommendedAutomatedVerification": true,
+      "automatedVerification": true
+    },
+    {
+      "id": "raycast-first-audio",
+      "text": "The Raycast Option+R selected-text flow starts playback from the gateway stream without waiting for the full generated audio file when streaming is available.",
+      "comment": "",
+      "recommendedAutomatedVerification": true,
+      "automatedVerification": true
+    },
+    {
+      "id": "break-compat-ok",
+      "text": "Backward compatibility is not required; breaking API or preference behavior is acceptable when it reduces complexity or improves maintainability, as long as the release impact is documented.",
+      "comment": "",
+      "recommendedAutomatedVerification": false,
+      "automatedVerification": false
+    },
+    {
+      "id": "stream-first-chunk",
+      "text": "The gateway has a stream-specific first-chunk strategy so long selections can produce first audio faster without relying only on the global buffered-synthesis chunk size.",
+      "comment": "",
+      "recommendedAutomatedVerification": true,
+      "automatedVerification": true
+    },
+    {
+      "id": "stream-transport-quality",
+      "text": "The streaming transport is validated for multi-chunk playback quality, with no obvious pauses, clicks, or decoder stalls in the target Raycast playback path.",
+      "comment": "",
+      "recommendedAutomatedVerification": false,
+      "automatedVerification": false
+    },
+    {
+      "id": "stream-tests",
+      "text": "Automated tests cover stream route behavior, ordered streamed output, first-chunk planning, and the Raycast streaming playback path.",
+      "comment": "",
+      "recommendedAutomatedVerification": true,
+      "automatedVerification": true
+    },
+    {
+      "id": "streaming-engine-capability",
+      "text": "The gateway engine abstraction supports engines that can stream audio incrementally while still allowing non-streaming engines to work through an adapter or simpler compatibility path.",
+      "comment": "",
+      "recommendedAutomatedVerification": true,
+      "automatedVerification": true
+    },
+    {
+      "id": "cosyvoice-engine",
+      "text": "CosyVoice is implemented as a first-class streaming backend, preferably through a sidecar-backed engine boundary that keeps tts-gateway responsible for routing, health, metrics, and client-facing API behavior.",
+      "comment": "",
+      "recommendedAutomatedVerification": true,
+      "automatedVerification": true
+    },
+    {
+      "id": "cosyvoice-benchmark",
+      "text": "CosyVoice latency and quality are benchmarked against the tuned Kokoro streaming baseline before any default-engine recommendation changes.",
+      "comment": "",
+      "recommendedAutomatedVerification": true,
+      "automatedVerification": true
+    }
+  ]
+}

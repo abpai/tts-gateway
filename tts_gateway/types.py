@@ -30,6 +30,7 @@ class SynthesisSpec:
   output_format: OutputFormat
   chunk_max_chars: int = 500
   pipeline_version: str = '1'
+  cache_namespace: str = ''
 
   def to_json(self) -> str:
     return json.dumps(
@@ -39,6 +40,7 @@ class SynthesisSpec:
         'output_format': self.output_format,
         'chunk_max_chars': self.chunk_max_chars,
         'pipeline_version': self.pipeline_version,
+        'cache_namespace': self.cache_namespace,
       },
       sort_keys=True,
       separators=(',', ':'),
@@ -53,6 +55,7 @@ class SynthesisSpec:
       output_format=data.get('output_format', 'wav'),
       chunk_max_chars=data.get('chunk_max_chars', 500),
       pipeline_version=data.get('pipeline_version', '1'),
+      cache_namespace=data.get('cache_namespace', ''),
     )
 
   @functools.cached_property

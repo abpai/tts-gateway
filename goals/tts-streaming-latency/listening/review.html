@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TTS Streaming Listening Review</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7f8;
+        --fg: #172026;
+        --muted: #5c6a72;
+        --line: #d9dee2;
+        --panel: #ffffff;
+        --accent: #0f766e;
+        --warn: #92400e;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111416;
+          --fg: #ecf1f3;
+          --muted: #a5b0b6;
+          --line: #30383d;
+          --panel: #181d20;
+          --accent: #5eead4;
+          --warn: #fbbf24;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 32px 20px 56px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.15;
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 30px;
+      }
+
+      h2 {
+        font-size: 22px;
+        margin-top: 32px;
+      }
+
+      h3 {
+        font-size: 16px;
+      }
+
+      p {
+        color: var(--muted);
+        margin: 8px 0 0;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.92em;
+      }
+
+      .top {
+        display: grid;
+        gap: 12px;
+      }
+
+      .note {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 14px 16px;
+        margin-top: 18px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 16px;
+      }
+
+      .sample {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 16px;
+      }
+
+      .sample header {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+        margin-bottom: 12px;
+      }
+
+      .badge {
+        border: 1px solid var(--line);
+        color: var(--accent);
+        padding: 2px 8px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      audio {
+        display: block;
+        width: 100%;
+        margin: 12px 0;
+      }
+
+      dl {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 6px 12px;
+        margin: 12px 0 0;
+        color: var(--muted);
+      }
+
+      dt {
+        color: var(--fg);
+        font-weight: 600;
+      }
+
+      dd {
+        margin: 0;
+      }
+
+      .checklist {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 16px;
+        margin-top: 18px;
+      }
+
+      .checklist label {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 7px 0;
+      }
+
+      input[type="checkbox"] {
+        margin-top: 3px;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 120px;
+        margin-top: 12px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--fg);
+        padding: 10px;
+        font: inherit;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+
+      button {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--fg);
+        padding: 8px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.primary {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      pre {
+        white-space: pre-wrap;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 12px;
+        overflow: auto;
+      }
+
+      .warn {
+        color: var(--warn);
+      }
+
+      @media (max-width: 760px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        dl {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="top">
+        <h1>TTS Streaming Listening Review</h1>
+        <p>
+          Listen to the generated WAV review files, then record the human
+          verdict that automated ffmpeg and waveform checks cannot provide.
+        </p>
+      </section>
+
+      <div class="note">
+        <strong>Important:</strong>
+        waveform sanity is PASS for these files, but that does not prove there
+        are no audible clicks, gaps, pacing issues, or Raycast stop/cancel
+        problems. The goal remains incomplete until a person signs off here or
+        in the Markdown reports.
+      </div>
+
+      <h2>Kokoro Current</h2>
+      <p>
+        Captured from the current worktree gateway on
+        <code>http://127.0.0.1:45129</code>. The sample spans five stream
+          chunks. The committed audio files are 8-second excerpts trimmed from
+          the full local capture to stay under the repository large-file gate.
+      </p>
+      <section class="grid">
+        <article class="sample">
+          <header>
+            <div>
+              <h3>Kokoro /tts/stream</h3>
+              <p>MP3 stream decoded to WAV</p>
+            </div>
+            <span class="badge">waveform PASS</span>
+          </header>
+          <audio controls preload="metadata" src="assets/kokoro-current/wav_tts_stream.wav"></audio>
+          <dl>
+            <dt>Duration</dt>
+            <dd>8.000s</dd>
+            <dt>Peak / RMS</dt>
+            <dd>21603 / 1643.93</dd>
+            <dt>Longest silence</dt>
+            <dd>0.581s</dd>
+            <dt>Max jump</dt>
+            <dd>9053</dd>
+          </dl>
+        </article>
+
+        <article class="sample">
+          <header>
+            <div>
+              <h3>Kokoro /tts/stream/pcm</h3>
+              <p>Raw PCM stream decoded to WAV</p>
+            </div>
+            <span class="badge">waveform PASS</span>
+          </header>
+          <audio controls preload="metadata" src="assets/kokoro-current/wav_tts_stream_pcm.wav"></audio>
+          <dl>
+            <dt>Duration</dt>
+            <dd>8.000s</dd>
+            <dt>Peak / RMS</dt>
+            <dd>24207 / 1733.12</dd>
+            <dt>Longest silence</dt>
+            <dd>0.583s</dd>
+            <dt>Max jump</dt>
+            <dd>10091</dd>
+          </dl>
+        </article>
+      </section>
+
+      <h2>CosyVoice3 Zero-Shot</h2>
+      <p>
+        Captured from the real local CosyVoice3 sidecar spike. Latency was not
+        competitive with Kokoro, but these files support the quality check.
+      </p>
+      <section class="grid">
+        <article class="sample">
+          <header>
+            <div>
+              <h3>CosyVoice /tts/stream</h3>
+              <p>MP3 stream decoded to WAV</p>
+            </div>
+            <span class="badge">waveform PASS</span>
+          </header>
+          <audio controls preload="metadata" src="assets/cosyvoice3-zero-shot-m1/wav_tts_stream.wav"></audio>
+          <dl>
+            <dt>Duration</dt>
+            <dd>2.114s</dd>
+            <dt>Peak / RMS</dt>
+            <dd>24584 / 2226.23</dd>
+            <dt>Longest silence</dt>
+            <dd>0.176s</dd>
+            <dt>Max jump</dt>
+            <dd>12190</dd>
+          </dl>
+        </article>
+
+        <article class="sample">
+          <header>
+            <div>
+              <h3>CosyVoice /tts/stream/pcm</h3>
+              <p>Raw PCM stream decoded to WAV</p>
+            </div>
+            <span class="badge">waveform PASS</span>
+          </header>
+          <audio controls preload="metadata" src="assets/cosyvoice3-zero-shot-m1/wav_tts_stream_pcm.wav"></audio>
+          <dl>
+            <dt>Duration</dt>
+            <dd>2.440s</dd>
+            <dt>Peak / RMS</dt>
+            <dd>18005 / 2163.26</dd>
+            <dt>Longest silence</dt>
+            <dd>0.254s</dd>
+            <dt>Max jump</dt>
+            <dd>10300</dd>
+          </dl>
+        </article>
+      </section>
+
+      <section class="checklist">
+        <h2>Human Verdict</h2>
+        <p>
+          Check these after listening to the files above and trying Option+R in
+          Raycast against the live Kokoro gateway.
+        </p>
+        <label><input type="checkbox" data-key="clicks" /> No clicks or pops at chunk boundaries</label>
+        <label><input type="checkbox" data-key="gaps" /> No audible gaps or dropped audio between chunks</label>
+        <label><input type="checkbox" data-key="prompt" /> Playback starts promptly for the selected-text workflow</label>
+        <label><input type="checkbox" data-key="stop" /> Stop Audio cancels playback during streaming</label>
+        <label><input type="checkbox" data-key="option-r" /> Option+R replay on selected text sounds correct</label>
+        <label><input type="checkbox" data-key="kokoro-default" /> Kokoro should remain the local latency default</label>
+        <textarea id="notes" placeholder="Listening notes, failures, or final verdict..."></textarea>
+        <div class="actions">
+          <button class="primary" id="copy">Copy Verdict JSON</button>
+          <button id="reset">Reset</button>
+        </div>
+      </section>
+
+      <h2>Source Reports</h2>
+      <pre>goals/tts-streaming-latency/listening/kokoro-current-report.md
+goals/tts-streaming-latency/listening/cosyvoice3-zero-shot-m1-report.md</pre>
+    </main>
+
+    <script>
+      const scope = "tts-streaming-latency-review";
+      const checkboxes = [...document.querySelectorAll("input[type='checkbox']")];
+      const notes = document.querySelector("#notes");
+
+      function loadState() {
+        const saved = JSON.parse(localStorage.getItem(scope) || "{}");
+        for (const box of checkboxes) {
+          box.checked = Boolean(saved[box.dataset.key]);
+        }
+        notes.value = saved.notes || "";
+      }
+
+      function currentState() {
+        const state = {
+          reviewedAt: new Date().toISOString(),
+          notes: notes.value,
+        };
+        for (const box of checkboxes) {
+          state[box.dataset.key] = box.checked;
+        }
+        return state;
+      }
+
+      function saveState() {
+        localStorage.setItem(scope, JSON.stringify(currentState()));
+      }
+
+      for (const box of checkboxes) {
+        box.addEventListener("change", saveState);
+      }
+      notes.addEventListener("input", saveState);
+
+      document.querySelector("#copy").addEventListener("click", async () => {
+        const text = JSON.stringify(currentState(), null, 2);
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          window.prompt("Copy verdict JSON", text);
+        }
+      });
+
+      document.querySelector("#reset").addEventListener("click", () => {
+        localStorage.removeItem(scope);
+        loadState();
+      });
+
+      loadState();
+    </script>
+  </body>
+</html>

@@ -9,6 +9,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.116,<0.117",
     "httpx>=0.28,<0.29",
+    "pydantic>=2,<3",
     "python-multipart>=0.0.21,<0.1",
     "uvicorn[standard]>=0.35,<0.36",
     "numpy>=1.24,<3",
