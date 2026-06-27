@@ -276,12 +276,8 @@ class JobRuntime:
       engine = self._engine_map.get(name)
       if engine is None:
         info[name] = {'mode': 'disabled'}
-      elif isinstance(engine, LazyNativeEngine):
-        info[name] = engine.health_status()
-      elif isinstance(engine, CosyVoiceSidecarEngine):
-        info[name] = engine.health_status()
       else:
-        info[name] = {'mode': 'unknown'}
+        info[name] = engine.health_status()
     return info
 
   async def warmup(self) -> dict[str, dict]:

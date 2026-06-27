@@ -14,14 +14,32 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
+
+try:
+  from scripts._gateway_http import (
+    NETWORK_ERRORS,
+    open_connection,
+    request_path_for,
+  )
+  from scripts._gateway_http import (
+    fetch_health as fetch_gateway_health,
+  )
+except ModuleNotFoundError:
+  from _gateway_http import (  # type: ignore[no-redef]
+    NETWORK_ERRORS,
+    open_connection,
+    request_path_for,
+  )
+  from _gateway_http import (
+    fetch_health as fetch_gateway_health,
+  )
 
 EndpointKind = Literal['speech', 'stream']
 RunCondition = Literal['as-is', 'warm', 'cold']
 EngineKind = Literal['kokoro', 'pocket', 'cosyvoice']
-NETWORK_ERRORS = (http.client.HTTPException, OSError, TimeoutError)
 
 
 class Fixture(BaseModel):
@@ -179,56 +197,6 @@ def apply_cache_bust(text: str, token: str | None) -> str:
   return f'{text}\n\nBenchmark cache bust token: {token}.'
 
 
-def request_path_for(base_url: str, path: str) -> str:
-  parsed = urlparse(base_url)
-  request_path = f'{parsed.path.rstrip("/")}{path}'
-  return request_path or '/'
-
-
-def open_connection(base_url: str) -> http.client.HTTPConnection:
-  parsed = urlparse(base_url)
-  conn_cls = (
-    http.client.HTTPSConnection
-    if parsed.scheme == 'https'
-    else http.client.HTTPConnection
-  )
-  return conn_cls(parsed.hostname or '', parsed.port, timeout=180)
-
-
-def fetch_health(base_url: str) -> dict[str, Any]:
-  request_path = request_path_for(base_url, '/health')
-  try:
-    conn = open_connection(base_url)
-  except NETWORK_ERRORS as exc:
-    return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}
-  try:
-    conn.request('GET', request_path)
-    response = conn.getresponse()
-    status = response.status
-    body = response.read()
-    if not 200 <= status < 300:
-      return {'ok': False, 'status': status}
-    payload = json.loads(body.decode())
-    snapshot: dict[str, Any] = {
-      'ok': True,
-      'status': status,
-      'primaryEngine': payload.get('primaryEngine'),
-      'fallbackEngine': payload.get('fallbackEngine'),
-      'engineChain': payload.get('engineChain'),
-      'streamFirstChunkMaxChars': payload.get('streamFirstChunkMaxChars'),
-      'streamChunkMaxChars': payload.get('streamChunkMaxChars'),
-    }
-    if 'engines' in payload:
-      snapshot['engines'] = payload['engines']
-    return snapshot
-  except json.JSONDecodeError as exc:
-    return {'ok': False, 'status': status, 'error': f'JSONDecodeError: {exc}'}
-  except NETWORK_ERRORS as exc:
-    return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}
-  finally:
-    conn.close()
-
-
 def engine_mismatch_warning(requested: str, health: dict[str, Any]) -> str | None:
   if not health.get('ok'):
     return None
@@ -236,6 +204,10 @@ def engine_mismatch_warning(requested: str, health: dict[str, Any]) -> str | Non
   if primary is None or primary == requested:
     return None
   return f'Requested engine {requested!r} but gateway primaryEngine is {primary!r}'
+
+
+def fetch_health(base_url: str) -> dict[str, Any]:
+  return fetch_gateway_health(base_url, open_connection_fn=open_connection)
 
 
 def post_timed(base_url: str, path: str, body: bytes, headers: dict[str, str]) -> dict:

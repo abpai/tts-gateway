@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
+
+try:
+  from scripts import apply_listening_verdict as verdict_mod
+except ModuleNotFoundError:
+  import apply_listening_verdict as verdict_mod  # type: ignore[no-redef]
 
 AuditLevel = Literal['PASS', 'WARN', 'FAIL']
 
@@ -76,19 +79,6 @@ def endpoint_values(items: list[Any]) -> set[str]:
     if isinstance(item, dict) and isinstance(item.get('endpoint'), str):
       values.add(item['endpoint'])
   return values
-
-
-def _load_apply_listening_verdict():
-  module_name = '_tts_gateway_apply_listening_verdict'
-  if module_name in sys.modules:
-    return sys.modules[module_name]
-  script_path = Path(__file__).resolve().parent / 'apply_listening_verdict.py'
-  spec = importlib.util.spec_from_file_location(module_name, script_path)
-  assert spec is not None and spec.loader is not None
-  module = importlib.util.module_from_spec(spec)
-  sys.modules[module_name] = module
-  spec.loader.exec_module(module)
-  return module
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -370,7 +360,6 @@ def check_verdict(
   *,
   require_human_verdict: bool,
 ) -> None:
-  verdict_mod = _load_apply_listening_verdict()
   path = goal_dir / 'listening/verdict.json'
   if not path.is_file():
     level: AuditLevel = 'FAIL' if require_human_verdict else 'WARN'

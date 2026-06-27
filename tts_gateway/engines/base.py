@@ -38,6 +38,10 @@ class TtsEngine(ABC):
   async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
     """Generate a PCM chunk from text."""
 
+  def health_status(self) -> dict[str, Any]:
+    """Return health metadata for /health."""
+    return {'mode': 'native'}
+
 
 @runtime_checkable
 class StreamingTtsEngine(Protocol):
