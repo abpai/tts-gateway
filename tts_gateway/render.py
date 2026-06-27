@@ -2,8 +2,8 @@
 
 Four entry points, no classes:
   plan_chunks          -- split text into ordered chunks
-  synthesize_chunks    -- ordered parallel synthesis → AsyncIterator[AudioChunk]
-  stream_audio         -- encode-as-you-go → AsyncIterator[bytes]
+  synthesize_chunks    -- ordered parallel synthesis -> audio chunk stream
+  stream_audio         -- encode-as-you-go -> byte stream
   synthesize_to_disk   -- write chunks + final artifact to disk
 """
 
@@ -13,7 +13,7 @@ import asyncio
 import fcntl
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 
 from tts_gateway.audio import (
@@ -23,8 +23,13 @@ from tts_gateway.audio import (
   merge_chunks,
   wav_bytes_to_chunk,
 )
-from tts_gateway.chunking import chunk_text
-from tts_gateway.engines.base import AudioChunk, TtsEngine
+from tts_gateway.chunking import chunk_text, stream_chunk_text
+from tts_gateway.engines.base import (
+  AudioChunk,
+  StreamingTtsEngine,
+  TtsEngine,
+  supports_streaming,
+)
 from tts_gateway.types import ArtifactRef, RenderPlan, SynthesisSpec
 
 logger = logging.getLogger(__name__)
@@ -45,6 +50,28 @@ def plan_chunks(spec: SynthesisSpec) -> RenderPlan:
   )
 
 
+def plan_stream_chunks(
+  spec: SynthesisSpec,
+  *,
+  first_chunk_max_chars: int,
+  stream_chunk_max_chars: int,
+) -> RenderPlan:
+  """Split spec text for streaming with a smaller first chunk. Pure, no I/O."""
+  chunks = stream_chunk_text(
+    spec.text,
+    first_chunk_max_chars,
+    stream_chunk_max_chars,
+  )
+  if not chunks:
+    raise ValueError('text is empty after normalization')
+  return RenderPlan(
+    request_hash=spec.content_hash,
+    chunks=tuple(chunks),
+    voice=spec.voice,
+    output_format=spec.output_format,
+  )
+
+
 async def synthesize_chunks(
   plan: RenderPlan,
   engines: list[TtsEngine],
@@ -52,7 +79,7 @@ async def synthesize_chunks(
   concurrency: int = 4,
   engine_timeout: float = 360.0,
   ffmpeg_path: str = 'ffmpeg',
-) -> AsyncIterator[AudioChunk]:
+) -> AsyncGenerator[AudioChunk, None]:
   """Yield AudioChunks in chunk-index order with parallel execution.
 
   Creates all futures up front (gated by semaphore) and awaits them
@@ -92,6 +119,34 @@ async def synthesize_chunks(
     await asyncio.gather(*futures, return_exceptions=True)
 
 
+async def stream_pcm(
+  spec: SynthesisSpec,
+  engines: list[TtsEngine],
+  *,
+  concurrency: int = 4,
+  engine_timeout: float = 360.0,
+  ffmpeg_path: str = 'ffmpeg',
+  stream_first_chunk_max_chars: int = 180,
+  stream_chunk_max_chars: int | None = None,
+) -> tuple[AudioChunk, AsyncGenerator[AudioChunk, None]]:
+  """Return first-chunk metadata and remaining ordered audio chunks."""
+  chunks = _stream_audio_chunks(
+    spec,
+    engines,
+    concurrency=concurrency,
+    engine_timeout=engine_timeout,
+    ffmpeg_path=ffmpeg_path,
+    stream_first_chunk_max_chars=stream_first_chunk_max_chars,
+    stream_chunk_max_chars=stream_chunk_max_chars,
+  )
+  try:
+    first = await chunks.__anext__()
+  except Exception:
+    await chunks.aclose()
+    raise
+  return first, chunks
+
+
 async def stream_audio(
   spec: SynthesisSpec,
   engines: list[TtsEngine],
@@ -99,27 +154,83 @@ async def stream_audio(
   concurrency: int = 4,
   engine_timeout: float = 360.0,
   ffmpeg_path: str = 'ffmpeg',
-) -> AsyncIterator[bytes]:
+  stream_first_chunk_max_chars: int = 180,
+  stream_chunk_max_chars: int | None = None,
+) -> AsyncGenerator[bytes, None]:
   """Yield encoded audio bytes chunk-by-chunk.
 
   For MP3: each chunk is independently encoded and yielded.
   For WAV: yields raw PCM bytes (caller handles framing).
   """
-  plan = plan_chunks(spec)
-  logger.info('Streaming %d chunk(s)', len(plan.chunks))
-
-  async for audio_chunk in synthesize_chunks(
-    plan,
+  async for audio_chunk in _stream_audio_chunks(
+    spec,
     engines,
     concurrency=concurrency,
     engine_timeout=engine_timeout,
     ffmpeg_path=ffmpeg_path,
+    stream_first_chunk_max_chars=stream_first_chunk_max_chars,
+    stream_chunk_max_chars=stream_chunk_max_chars,
   ):
     if spec.output_format == 'mp3':
       payload, _ = encode_output(audio_chunk, 'mp3', ffmpeg_path)
       yield payload
     else:
       yield audio_chunk.pcm_bytes
+
+
+async def _stream_audio_chunks(
+  spec: SynthesisSpec,
+  engines: list[TtsEngine],
+  *,
+  concurrency: int,
+  engine_timeout: float,
+  ffmpeg_path: str,
+  stream_first_chunk_max_chars: int,
+  stream_chunk_max_chars: int | None,
+) -> AsyncGenerator[AudioChunk, None]:
+  opened = await _open_native_stream(
+    spec.text, spec.voice, engines, timeout=engine_timeout
+  )
+  if opened is not None:
+    first, stream = opened
+    logger.info('Streaming native PCM from engine')
+    async for chunk in _native_pcm_chunks(
+      first,
+      stream,
+      ffmpeg_path=ffmpeg_path,
+      timeout=engine_timeout,
+      include_first=True,
+    ):
+      yield chunk
+    return
+
+  plan = _stream_chunk_plan(spec, stream_first_chunk_max_chars, stream_chunk_max_chars)
+  logger.info('Streaming %d chunk(s)', len(plan.chunks))
+  async for chunk in synthesize_chunks(
+    plan,
+    engines,
+    concurrency=concurrency,
+    engine_timeout=engine_timeout,
+    ffmpeg_path=ffmpeg_path,
+  ):
+    yield chunk
+
+
+def _stream_chunk_plan(
+  spec: SynthesisSpec,
+  first_chunk_max_chars: int,
+  stream_chunk_max_chars: int | None,
+) -> RenderPlan:
+  chunk_limit = (
+    stream_chunk_max_chars
+    if stream_chunk_max_chars is not None
+    else spec.chunk_max_chars
+  )
+  return plan_stream_chunks(
+    spec,
+    first_chunk_max_chars=first_chunk_max_chars,
+    stream_chunk_max_chars=chunk_limit,
+  )
 
 
 async def synthesize_to_disk(
@@ -275,3 +386,92 @@ async def _try_engines(
       )
 
   raise RuntimeError(f'all engines failed: {last_error}') from last_error
+
+
+async def _open_native_stream(
+  text: str,
+  voice: str,
+  engines: list[TtsEngine],
+  *,
+  timeout: float,
+) -> tuple[AudioChunk, AsyncGenerator[AudioChunk, None]] | None:
+  """Open the first native stream that yields a chunk before timeout."""
+  candidates = _streaming_candidates(engines)
+  if not candidates:
+    return None
+
+  last_error: Exception | None = None
+  for engine in candidates:
+    stream = engine.stream_synthesize(text, voice=voice)
+    try:
+      first = await asyncio.wait_for(stream.__anext__(), timeout=timeout)
+      return first, stream
+    except TimeoutError as exc:
+      last_error = exc
+      await stream.aclose()
+      logger.warning(
+        'stream-engine-fallback',
+        extra={'engine': getattr(engine, 'name', '?'), 'error': 'timeout'},
+      )
+    except StopAsyncIteration:
+      await stream.aclose()
+    except Exception as exc:
+      last_error = exc
+      await stream.aclose()
+      logger.warning(
+        'stream-engine-fallback',
+        extra={'engine': getattr(engine, 'name', '?'), 'error': str(exc)},
+      )
+
+  if last_error is not None and len(candidates) == len(engines):
+    raise last_error
+  return None
+
+
+def _streaming_candidates(engines: list[TtsEngine]) -> list[StreamingTtsEngine]:
+  if not engines or not supports_streaming(engines[0]):
+    return []
+
+  candidates: list[StreamingTtsEngine] = []
+  for engine in engines:
+    if supports_streaming(engine):
+      candidates.append(engine)
+  return candidates
+
+
+async def _aligned_native_tail(
+  reference: AudioChunk,
+  stream: AsyncGenerator[AudioChunk, None],
+  *,
+  ffmpeg_path: str,
+  timeout: float,
+) -> AsyncGenerator[AudioChunk, None]:
+  while True:
+    try:
+      chunk = await asyncio.wait_for(stream.__anext__(), timeout=timeout)
+    except StopAsyncIteration:
+      return
+    yield align_chunk_format(chunk, reference, ffmpeg_path)
+
+
+async def _native_pcm_chunks(
+  first: AudioChunk,
+  stream: AsyncGenerator[AudioChunk, None],
+  *,
+  ffmpeg_path: str,
+  timeout: float,
+  include_first: bool,
+) -> AsyncGenerator[AudioChunk, None]:
+  """Yield native-stream chunks with format alignment."""
+  try:
+    if include_first:
+      yield first
+    async for chunk in _aligned_native_tail(
+      first,
+      stream,
+      ffmpeg_path=ffmpeg_path,
+      timeout=timeout,
+    ):
+      yield chunk
+  finally:
+    await stream.aclose()

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from tts_gateway.config import EngineName, GatewayConfig
 from tts_gateway.engines.base import TtsEngine
+from tts_gateway.engines.cosyvoice_sidecar import CosyVoiceSidecarEngine
 from tts_gateway.engines.kokoro_native import KokoroNativeEngine
 from tts_gateway.engines.native_engine import LazyNativeEngine
 from tts_gateway.engines.pocket_native import PocketNativeEngine
@@ -59,6 +60,13 @@ def _record_to_view(record: JobRecord) -> JobView:
   )
 
 
+def _cache_namespace(config: GatewayConfig, engine_chain: list[str]) -> str:
+  parts = [f'engines={",".join(engine_chain)}']
+  if 'cosyvoice' in engine_chain:
+    parts.append(f'cosyvoice={config.cosyvoice_base_url}')
+  return '|'.join(parts)
+
+
 class JobRuntime:
   """The single application service for TTS synthesis.
 
@@ -79,6 +87,11 @@ class JobRuntime:
         name='pocket',
         enabled=config.pocket_enabled,
         create_native=lambda: PocketNativeEngine(config),
+      ),
+      'cosyvoice': _resolve_engine(
+        name='cosyvoice',
+        enabled=config.cosyvoice_enabled,
+        create_native=lambda: CosyVoiceSidecarEngine(config),
       ),
     }
     chain: list[str] = [config.primary_engine]
@@ -102,6 +115,7 @@ class JobRuntime:
       output_format=self.config.output_format,
       chunk_max_chars=self.config.chunk_max_chars,
       pipeline_version=self.config.pipeline_version,
+      cache_namespace=_cache_namespace(self.config, self._engine_chain),
     )
 
   # --- Job API ---
@@ -258,14 +272,12 @@ class JobRuntime:
   def engine_info(self) -> dict[str, dict]:
     """Per-engine status for /health reporting."""
     info: dict[str, dict] = {}
-    for name in ('kokoro', 'pocket'):
+    for name in ('kokoro', 'pocket', 'cosyvoice'):
       engine = self._engine_map.get(name)
       if engine is None:
         info[name] = {'mode': 'disabled'}
-      elif isinstance(engine, LazyNativeEngine):
-        info[name] = engine.health_status()
       else:
-        info[name] = {'mode': 'unknown'}
+        info[name] = engine.health_status()
     return info
 
   async def warmup(self) -> dict[str, dict]:

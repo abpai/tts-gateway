@@ -1,0 +1,14 @@
+{
+  "reviewedAt": "2026-06-26T19:40:07.014Z",
+  "notes": "",
+  "clicks": true,
+  "gaps": true,
+  "prompt": true,
+  "stop": true,
+  "option-r": true,
+  "kokoro-default": true,
+  "complete": true,
+  "status": "PASS",
+  "missingChecks": [],
+  "appliedAt": "2026-06-26T19:43:11.010982Z"
+}

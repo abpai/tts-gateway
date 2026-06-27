@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-EngineName = Literal['kokoro', 'pocket']
+EngineName = Literal['kokoro', 'pocket', 'cosyvoice']
 EngineSetting = EngineName | Literal['none']
 OutputFormat = Literal['mp3', 'wav']
 DeviceMode = Literal['auto', 'cuda', 'mps', 'cpu']
@@ -19,11 +19,16 @@ class GatewayConfig:
   fallback_engine: EngineName | None
   output_format: OutputFormat
   chunk_max_chars: int
+  stream_first_chunk_max_chars: int
+  stream_chunk_max_chars: int
   request_timeout_seconds: int
   engine_timeout_seconds: int
   ffmpeg_path: str
   kokoro_enabled: bool
   pocket_enabled: bool
+  cosyvoice_enabled: bool
+  cosyvoice_base_url: str
+  cosyvoice_request_timeout_seconds: int
   device_mode: DeviceMode
   models_dir: str
   default_voice: str | None
@@ -71,7 +76,11 @@ def _parse_engine(
     return 'kokoro'
   if raw == 'pocket':
     return 'pocket'
-  raise ValueError(f'{name} must be one of kokoro, pocket, none; received: {raw}')
+  if raw == 'cosyvoice':
+    return 'cosyvoice'
+  raise ValueError(
+    f'{name} must be one of kokoro, pocket, cosyvoice, none; received: {raw}'
+  )
 
 
 def _parse_output_format(name: str, default: OutputFormat) -> OutputFormat:
@@ -102,16 +111,34 @@ def load_config() -> GatewayConfig:
 
   fallback_engine = _parse_engine('TTS_FALLBACK_ENGINE', 'none', allow_none=True)
 
+  chunk_max_chars = _parse_positive_int('TTS_CHUNK_MAX_CHARS', 500)
+  engine_timeout_seconds = _parse_positive_int('TTS_ENGINE_TIMEOUT_SECONDS', 360)
+  cosyvoice_timeout_raw = os.getenv('TTS_COSYVOICE_REQUEST_TIMEOUT_SECONDS', '').strip()
+  cosyvoice_request_timeout_seconds = (
+    _parse_positive_int('TTS_COSYVOICE_REQUEST_TIMEOUT_SECONDS', engine_timeout_seconds)
+    if cosyvoice_timeout_raw
+    else engine_timeout_seconds
+  )
+
   return GatewayConfig(
     primary_engine=primary_engine,
     fallback_engine=fallback_engine,
     output_format=_parse_output_format('TTS_OUTPUT_FORMAT', 'mp3'),
-    chunk_max_chars=_parse_positive_int('TTS_CHUNK_MAX_CHARS', 500),
+    chunk_max_chars=chunk_max_chars,
+    stream_first_chunk_max_chars=_parse_positive_int(
+      'TTS_STREAM_FIRST_CHUNK_MAX_CHARS', 180
+    ),
+    stream_chunk_max_chars=_parse_positive_int(
+      'TTS_STREAM_CHUNK_MAX_CHARS', chunk_max_chars
+    ),
     request_timeout_seconds=_parse_positive_int('TTS_REQUEST_TIMEOUT_SECONDS', 3600),
-    engine_timeout_seconds=_parse_positive_int('TTS_ENGINE_TIMEOUT_SECONDS', 360),
+    engine_timeout_seconds=engine_timeout_seconds,
     ffmpeg_path=_optional('TTS_FFMPEG_PATH', 'ffmpeg'),
     kokoro_enabled=_parse_bool('KOKORO_TTS_ENABLED', True),
     pocket_enabled=_parse_bool('POCKET_TTS_ENABLED', False),
+    cosyvoice_enabled=_parse_bool('COSYVOICE_TTS_ENABLED', False),
+    cosyvoice_base_url=_optional('TTS_COSYVOICE_BASE_URL', 'http://127.0.0.1:50000'),
+    cosyvoice_request_timeout_seconds=cosyvoice_request_timeout_seconds,
     device_mode=_parse_device_mode('TTS_DEVICE_MODE', 'auto'),
     models_dir=_optional('TTS_MODELS_DIR', os.path.expanduser(DEFAULT_MODELS_DIR)),
     default_voice=_parse_optional_str('TTS_DEFAULT_VOICE'),

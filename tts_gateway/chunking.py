@@ -102,3 +102,30 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
     chunks.append(current.strip())
 
   return chunks
+
+
+def _remainder_after_chunk(normalized: str, first_chunk: str) -> str:
+  if not normalized.startswith(first_chunk):
+    raise ValueError('first chunk is not a prefix of normalized text')
+  return normalized[len(first_chunk) :].lstrip(' ')
+
+
+def stream_chunk_text(
+  text: str,
+  first_chunk_max_chars: int,
+  chunk_max_chars: int,
+) -> list[str]:
+  """Plan stream chunks: a smaller first chunk, then normal-sized chunks."""
+  normalized = normalize_text(text)
+  if not normalized:
+    return []
+
+  if len(normalized) <= first_chunk_max_chars:
+    return [normalized]
+
+  first = chunk_text(normalized, first_chunk_max_chars)[0]
+  remainder = _remainder_after_chunk(normalized, first)
+  if not remainder:
+    return [first]
+
+  return [first, *chunk_text(remainder, chunk_max_chars)]

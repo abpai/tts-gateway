@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from dataclasses import replace
 from typing import TypedDict, Unpack
 
@@ -12,11 +13,16 @@ _BASE_CONFIG = GatewayConfig(
   fallback_engine=None,
   output_format='wav',
   chunk_max_chars=3000,
+  stream_first_chunk_max_chars=180,
+  stream_chunk_max_chars=3000,
   request_timeout_seconds=3600,
   engine_timeout_seconds=30,
   ffmpeg_path='ffmpeg',
   kokoro_enabled=True,
   pocket_enabled=False,
+  cosyvoice_enabled=False,
+  cosyvoice_base_url='http://127.0.0.1:50000',
+  cosyvoice_request_timeout_seconds=30,
   device_mode='cpu',
   models_dir='/tmp/models',
   default_voice=None,
@@ -33,11 +39,16 @@ class _ConfigOverrides(TypedDict, total=False):
   fallback_engine: EngineName | None
   output_format: OutputFormat
   chunk_max_chars: int
+  stream_first_chunk_max_chars: int
+  stream_chunk_max_chars: int
   request_timeout_seconds: int
   engine_timeout_seconds: int
   ffmpeg_path: str
   kokoro_enabled: bool
   pocket_enabled: bool
+  cosyvoice_enabled: bool
+  cosyvoice_base_url: str
+  cosyvoice_request_timeout_seconds: int
   device_mode: DeviceMode
   models_dir: str
   default_voice: str | None
@@ -124,3 +135,90 @@ class StaggeredEngine(Engine):
       )
     finally:
       self.active_calls -= 1
+
+
+class MockStreamingEngine(Engine):
+  """Engine that yields configured chunks via native streaming."""
+
+  def __init__(
+    self,
+    name: str = 'stream-mock',
+    chunks: tuple[AudioChunk, ...] | None = None,
+  ) -> None:
+    self.name = name
+    self.chunks = chunks or (DUMMY_CHUNK,)
+    self.stream_calls: list[tuple[str, str | None]] = []
+    self.synth_calls: list[tuple[str, str | None]] = []
+
+  async def stream_synthesize(
+    self, text: str, *, voice: str | None = None
+  ) -> AsyncGenerator[AudioChunk, None]:
+    self.stream_calls.append((text, voice))
+    for chunk in self.chunks:
+      yield chunk
+
+  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+    self.synth_calls.append((text, voice))
+    return self.chunks[0]
+
+
+class FailingStreamEngine(Engine):
+  """Streaming engine that fails before or after yielding chunks."""
+
+  def __init__(
+    self,
+    name: str,
+    error: Exception,
+    *,
+    chunks_before_error: int = 0,
+  ) -> None:
+    self.name = name
+    self._error = error
+    self.chunks_before_error = chunks_before_error
+
+  async def stream_synthesize(
+    self, text: str, *, voice: str | None = None
+  ) -> AsyncGenerator[AudioChunk, None]:
+    for _ in range(self.chunks_before_error):
+      yield DUMMY_CHUNK
+    raise self._error
+
+  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+    raise self._error
+
+
+class SlowStreamEngine(Engine):
+  """Streaming engine with a delay before the first chunk."""
+
+  def __init__(self, name: str, delay: float) -> None:
+    self.name = name
+    self._delay = delay
+
+  async def stream_synthesize(
+    self, text: str, *, voice: str | None = None
+  ) -> AsyncGenerator[AudioChunk, None]:
+    await asyncio.sleep(self._delay)
+    yield DUMMY_CHUNK
+
+  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+    await asyncio.sleep(self._delay)
+    return DUMMY_CHUNK
+
+
+class SlowAfterFirstStreamEngine(Engine):
+  """Streaming engine with a delay after the first chunk."""
+
+  def __init__(self, name: str, delay: float) -> None:
+    self.name = name
+    self._delay = delay
+
+  async def stream_synthesize(
+    self, text: str, *, voice: str | None = None
+  ) -> AsyncGenerator[AudioChunk, None]:
+    yield DUMMY_CHUNK
+    await asyncio.sleep(self._delay)
+    yield DUMMY_CHUNK
+
+  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+    await asyncio.sleep(self._delay)
+    return DUMMY_CHUNK
