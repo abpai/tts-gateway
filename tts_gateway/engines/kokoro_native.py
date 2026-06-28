@@ -125,9 +125,10 @@ class KokoroNativeEngine(LazyNativeEngine):
       # Preload cached voice files so load_single_voice skips hf_hub_download
       voices_dir = snapshot_dir / 'voices'
       if voices_dir.is_dir():
+        load_torch_file = cast(Any, import_module('torch')).load
         for voice_file in voices_dir.glob('*.pt'):
           voice_name = voice_file.stem
-          pipeline.voices[voice_name] = __import__('torch').load(
+          pipeline.voices[voice_name] = load_torch_file(
             str(voice_file), weights_only=True
           )
       self._pipeline = pipeline

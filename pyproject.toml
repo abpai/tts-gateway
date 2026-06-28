@@ -1,6 +1,6 @@
 [project]
 name = "tts-gateway"
-version = "1.0.0"
+version = "1.1.0"
 description = "Multi-provider TTS gateway server with engine fallback, text chunking, and audio stitching"
 license = "MIT"
 authors = [{ name = "Andy Pai" }]
