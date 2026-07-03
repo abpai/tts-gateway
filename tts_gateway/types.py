@@ -31,20 +31,20 @@ class SynthesisSpec:
   chunk_max_chars: int = 500
   pipeline_version: str = '1'
   cache_namespace: str = ''
+  speed: float = 1.0
 
   def to_json(self) -> str:
-    return json.dumps(
-      {
-        'text': self.text,
-        'voice': self.voice,
-        'output_format': self.output_format,
-        'chunk_max_chars': self.chunk_max_chars,
-        'pipeline_version': self.pipeline_version,
-        'cache_namespace': self.cache_namespace,
-      },
-      sort_keys=True,
-      separators=(',', ':'),
-    )
+    data: dict[str, object] = {
+      'text': self.text,
+      'voice': self.voice,
+      'output_format': self.output_format,
+      'chunk_max_chars': self.chunk_max_chars,
+      'pipeline_version': self.pipeline_version,
+      'cache_namespace': self.cache_namespace,
+    }
+    if self.speed != 1.0:
+      data['speed'] = self.speed
+    return json.dumps(data, sort_keys=True, separators=(',', ':'))
 
   @classmethod
   def from_json(cls, raw: str) -> SynthesisSpec:
@@ -56,6 +56,7 @@ class SynthesisSpec:
       chunk_max_chars=data.get('chunk_max_chars', 500),
       pipeline_version=data.get('pipeline_version', '1'),
       cache_namespace=data.get('cache_namespace', ''),
+      speed=data.get('speed', 1.0),
     )
 
   @functools.cached_property
@@ -71,6 +72,7 @@ class RenderPlan:
   chunks: tuple[str, ...]
   voice: str
   output_format: OutputFormat
+  speed: float = 1.0
 
 
 @dataclass(frozen=True)

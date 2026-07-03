@@ -37,6 +37,7 @@ class GatewayConfig:
   data_dir: str
   pipeline_version: str
   worker_poll_seconds: float
+  warmup_on_start: bool
 
 
 def _optional(name: str, default: str) -> str:
@@ -147,4 +148,5 @@ def load_config() -> GatewayConfig:
     data_dir=_optional('TTS_DATA_DIR', os.path.expanduser(DEFAULT_DATA_DIR)),
     pipeline_version=_optional('TTS_PIPELINE_VERSION', '1'),
     worker_poll_seconds=float(_optional('TTS_WORKER_POLL_SECONDS', '1.0')),
+    warmup_on_start=_parse_bool('TTS_WARMUP_ON_START', True),
   )

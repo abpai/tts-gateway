@@ -103,6 +103,7 @@ def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
   assert cfg.default_voice is None
   assert cfg.bind_host == '127.0.0.1'
   assert cfg.bind_port == 8000
+  assert cfg.warmup_on_start is True
 
 
 def test_load_config_stream_chunk_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,3 +144,11 @@ def test_load_config_default_voice(monkeypatch: pytest.MonkeyPatch) -> None:
   _set_minimal_env(monkeypatch, TTS_DEFAULT_VOICE='af_bella')
   cfg = load_config()
   assert cfg.default_voice == 'af_bella'
+
+
+def test_load_config_warmup_on_start_override(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  _set_minimal_env(monkeypatch, TTS_WARMUP_ON_START='false')
+  cfg = load_config()
+  assert cfg.warmup_on_start is False

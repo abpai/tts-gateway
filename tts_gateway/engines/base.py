@@ -18,9 +18,16 @@ class AudioChunk:
   sample_rate: int
   channels: int
   sample_width: int
+  speed_applied: float | None = None
 
   @classmethod
-  def from_float32(cls, audio: Any, *, sample_rate: int) -> AudioChunk:
+  def from_float32(
+    cls,
+    audio: Any,
+    *,
+    sample_rate: int,
+    speed_applied: float | None = None,
+  ) -> AudioChunk:
     """Convert float32 audio array to 16-bit PCM AudioChunk."""
     pcm_int16 = (np.asarray(audio) * 32767).clip(-32768, 32767).astype(np.int16)
     return cls(
@@ -28,14 +35,22 @@ class AudioChunk:
       sample_rate=sample_rate,
       channels=1,
       sample_width=2,
+      speed_applied=speed_applied,
     )
 
 
 class TtsEngine(ABC):
   name: str
+  applies_speed: bool = False
 
   @abstractmethod
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     """Generate a PCM chunk from text."""
 
   def health_status(self) -> dict[str, Any]:
@@ -48,9 +63,14 @@ class StreamingTtsEngine(Protocol):
   """Engine that yields incremental PCM chunks for a full text input."""
 
   name: str
+  applies_speed: bool
 
   def stream_synthesize(
-    self, text: str, *, voice: str | None = None
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
   ) -> AsyncGenerator[AudioChunk, None]:
     """Yield ordered PCM chunks for text without gateway-side pre-chunking."""
 

@@ -2,13 +2,53 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from abc import abstractmethod
+from collections.abc import AsyncGenerator, Callable, Iterable
+from typing import cast
 
 from tts_gateway.config import DeviceMode
 from tts_gateway.engines.base import AudioChunk, EngineError, TtsEngine
 
 logger = logging.getLogger(__name__)
+_STREAM_DONE = object()
+_StreamItem = AudioChunk | Exception | object
+
+
+def _send_stream_item(
+  loop: asyncio.AbstractEventLoop,
+  queue: asyncio.Queue[_StreamItem],
+  stop: threading.Event,
+  item: _StreamItem,
+) -> None:
+  try:
+    loop.call_soon_threadsafe(queue.put_nowait, item)
+  except RuntimeError:
+    stop.set()
+
+
+def _run_stream_worker(
+  produce: Callable[[threading.Event], Iterable[AudioChunk]],
+  send: Callable[[_StreamItem], None],
+  stop: threading.Event,
+  empty_error: str,
+) -> None:
+  produced = False
+  try:
+    for chunk in produce(stop):
+      if stop.is_set():
+        return
+      produced = True
+      send(chunk)
+    if not produced and not stop.is_set():
+      send(EngineError(empty_error))
+  except Exception as exc:
+    if not stop.is_set():
+      send(exc)
+  finally:
+    if not stop.is_set():
+      send(_STREAM_DONE)
 
 
 class LazyNativeEngine(TtsEngine):
@@ -46,19 +86,30 @@ class LazyNativeEngine(TtsEngine):
     """Load model weights into memory.  Called once, under lock."""
 
   @abstractmethod
-  def _run_inference(self, text: str, voice: str | None = None) -> AudioChunk:
+  def _run_inference(
+    self,
+    text: str,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     """Run TTS inference on *text*.  Called after model is loaded."""
 
   # ------------------------------------------------------------------
   # Public API
   # ------------------------------------------------------------------
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     if not self.enabled:
       raise EngineError(f'{self.name} engine is disabled')
     await self._ensure_loaded()
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, self._run_inference, text, voice)
+    return await loop.run_in_executor(None, self._run_inference, text, voice, speed)
 
   async def ensure_loaded(self) -> None:
     """Public wrapper so /warmup can call this directly."""
@@ -127,3 +178,36 @@ class LazyNativeEngine(TtsEngine):
     if exc.name == required_module:
       return True
     return f"No module named '{required_module}'" in str(exc)
+
+  async def _stream_blocking_chunks(
+    self,
+    produce: Callable[[threading.Event], Iterable[AudioChunk]],
+    *,
+    empty_error: str,
+  ) -> AsyncGenerator[AudioChunk, None]:
+    """Bridge a blocking chunk iterator into an async generator."""
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[_StreamItem] = asyncio.Queue()
+    stop = threading.Event()
+
+    def send(item: _StreamItem) -> None:
+      _send_stream_item(loop, queue, stop, item)
+
+    thread = threading.Thread(
+      target=_run_stream_worker,
+      args=(produce, send, stop, empty_error),
+      name=f'{self.name}-stream',
+      daemon=True,
+    )
+    thread.start()
+    try:
+      while True:
+        item = await queue.get()
+        if item is _STREAM_DONE:
+          return
+        if isinstance(item, Exception):
+          raise item
+        yield cast(AudioChunk, item)
+    finally:
+      stop.set()
+      await asyncio.to_thread(thread.join)

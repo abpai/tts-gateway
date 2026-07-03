@@ -35,7 +35,12 @@ class _WarmupEngine(LazyNativeEngine):
     self.load_count += 1
     self._device = 'cpu'
 
-  def _run_inference(self, text: str, voice: str | None = None) -> AudioChunk:
+  def _run_inference(
+    self,
+    text: str,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     return DUMMY_CHUNK
 
 

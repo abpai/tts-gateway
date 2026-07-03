@@ -31,6 +31,7 @@ _BASE_CONFIG = GatewayConfig(
   data_dir='/tmp/tts-data',
   pipeline_version='1',
   worker_poll_seconds=1.0,
+  warmup_on_start=False,
 )
 
 
@@ -57,6 +58,7 @@ class _ConfigOverrides(TypedDict, total=False):
   data_dir: str
   pipeline_version: str
   worker_poll_seconds: float
+  warmup_on_start: bool
 
 
 def _make_config(**overrides: Unpack[_ConfigOverrides]) -> GatewayConfig:
@@ -83,7 +85,13 @@ class MockEngine(Engine):
     self.chunk = chunk
     self.calls: list[tuple[str, str | None]] = []
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     self.calls.append((text, voice))
     return self.chunk
 
@@ -95,7 +103,13 @@ class FailingEngine(Engine):
     self.name = name
     self._error = error
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     raise self._error
 
 
@@ -106,7 +120,13 @@ class SlowEngine(Engine):
     self.name = name
     self._delay = delay
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     await asyncio.sleep(self._delay)
     return DUMMY_CHUNK
 
@@ -121,7 +141,13 @@ class StaggeredEngine(Engine):
     self.max_active_calls = 0
     self.voices: list[str | None] = []
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     self.voices.append(voice)
     self.active_calls += 1
     self.max_active_calls = max(self.max_active_calls, self.active_calls)
@@ -151,13 +177,23 @@ class MockStreamingEngine(Engine):
     self.synth_calls: list[tuple[str, str | None]] = []
 
   async def stream_synthesize(
-    self, text: str, *, voice: str | None = None
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
   ) -> AsyncGenerator[AudioChunk, None]:
     self.stream_calls.append((text, voice))
     for chunk in self.chunks:
       yield chunk
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     self.synth_calls.append((text, voice))
     return self.chunks[0]
 
@@ -177,13 +213,23 @@ class FailingStreamEngine(Engine):
     self.chunks_before_error = chunks_before_error
 
   async def stream_synthesize(
-    self, text: str, *, voice: str | None = None
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
   ) -> AsyncGenerator[AudioChunk, None]:
     for _ in range(self.chunks_before_error):
       yield DUMMY_CHUNK
     raise self._error
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     raise self._error
 
 
@@ -195,12 +241,22 @@ class SlowStreamEngine(Engine):
     self._delay = delay
 
   async def stream_synthesize(
-    self, text: str, *, voice: str | None = None
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
   ) -> AsyncGenerator[AudioChunk, None]:
     await asyncio.sleep(self._delay)
     yield DUMMY_CHUNK
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     await asyncio.sleep(self._delay)
     return DUMMY_CHUNK
 
@@ -213,12 +269,22 @@ class SlowAfterFirstStreamEngine(Engine):
     self._delay = delay
 
   async def stream_synthesize(
-    self, text: str, *, voice: str | None = None
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
   ) -> AsyncGenerator[AudioChunk, None]:
     yield DUMMY_CHUNK
     await asyncio.sleep(self._delay)
     yield DUMMY_CHUNK
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     await asyncio.sleep(self._delay)
     return DUMMY_CHUNK

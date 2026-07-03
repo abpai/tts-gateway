@@ -108,7 +108,13 @@ class JobRuntime:
 
   # --- Spec construction (one place) ---
 
-  def make_spec(self, text: str, voice: str | None = None) -> SynthesisSpec:
+  def make_spec(
+    self,
+    text: str,
+    voice: str | None = None,
+    *,
+    speed: float = 1.0,
+  ) -> SynthesisSpec:
     return SynthesisSpec(
       text=text,
       voice=voice or self.config.default_voice or '',
@@ -116,6 +122,7 @@ class JobRuntime:
       chunk_max_chars=self.config.chunk_max_chars,
       pipeline_version=self.config.pipeline_version,
       cache_namespace=_cache_namespace(self.config, self._engine_chain),
+      speed=speed,
     )
 
   # --- Job API ---

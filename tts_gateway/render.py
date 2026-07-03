@@ -14,6 +14,7 @@ import fcntl
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable
+from dataclasses import replace
 from pathlib import Path
 
 from tts_gateway.audio import (
@@ -24,6 +25,7 @@ from tts_gateway.audio import (
   wav_bytes_to_chunk,
 )
 from tts_gateway.chunking import chunk_text, stream_chunk_text
+from tts_gateway.config import OutputFormat
 from tts_gateway.engines.base import (
   AudioChunk,
   StreamingTtsEngine,
@@ -47,6 +49,7 @@ def plan_chunks(spec: SynthesisSpec) -> RenderPlan:
     chunks=tuple(chunks),
     voice=spec.voice,
     output_format=spec.output_format,
+    speed=spec.speed,
   )
 
 
@@ -69,6 +72,7 @@ def plan_stream_chunks(
     chunks=tuple(chunks),
     voice=spec.voice,
     output_format=spec.output_format,
+    speed=spec.speed,
   )
 
 
@@ -94,7 +98,13 @@ async def synthesize_chunks(
         'chunk-started', extra={'chunk_index': index, 'chunk_chars': len(text)}
       )
       started = time.perf_counter()
-      chunk = await _try_engines(text, plan.voice, engines, timeout=engine_timeout)
+      chunk = await _try_engines(
+        text,
+        plan.voice,
+        plan.speed,
+        engines,
+        timeout=engine_timeout,
+      )
       elapsed = int((time.perf_counter() - started) * 1000)
       logger.debug('chunk-done', extra={'chunk_index': index, 'elapsed_ms': elapsed})
       return chunk
@@ -108,7 +118,9 @@ async def synthesize_chunks(
     for i in range(len(plan.chunks)):
       chunk = await futures[i]
       if reference is not None:
-        chunk = align_chunk_format(chunk, reference, ffmpeg_path)
+        chunk = await asyncio.to_thread(
+          align_chunk_format, chunk, reference, ffmpeg_path
+        )
       else:
         reference = chunk
       yield chunk
@@ -171,11 +183,66 @@ async def stream_audio(
     stream_first_chunk_max_chars=stream_first_chunk_max_chars,
     stream_chunk_max_chars=stream_chunk_max_chars,
   ):
-    if spec.output_format == 'mp3':
-      payload, _ = encode_output(audio_chunk, 'mp3', ffmpeg_path)
-      yield payload
-    else:
-      yield audio_chunk.pcm_bytes
+    yield await _encode_stream_chunk(audio_chunk, spec.output_format, ffmpeg_path)
+
+
+async def open_stream_audio(
+  spec: SynthesisSpec,
+  engines: list[TtsEngine],
+  *,
+  concurrency: int = 4,
+  engine_timeout: float = 360.0,
+  ffmpeg_path: str = 'ffmpeg',
+  stream_first_chunk_max_chars: int = 180,
+  stream_chunk_max_chars: int | None = None,
+) -> tuple[bytes, float | None, AsyncGenerator[bytes, None]]:
+  """Return first encoded bytes, speed metadata, and remaining bytes."""
+  chunks = _stream_audio_chunks(
+    spec,
+    engines,
+    concurrency=concurrency,
+    engine_timeout=engine_timeout,
+    ffmpeg_path=ffmpeg_path,
+    stream_first_chunk_max_chars=stream_first_chunk_max_chars,
+    stream_chunk_max_chars=stream_chunk_max_chars,
+  )
+  try:
+    first_chunk = await chunks.__anext__()
+  except Exception:
+    await chunks.aclose()
+    raise
+
+  first_payload = await _encode_stream_chunk(
+    first_chunk, spec.output_format, ffmpeg_path
+  )
+  return (
+    first_payload,
+    first_chunk.speed_applied,
+    _encoded_tail(chunks, spec.output_format, ffmpeg_path),
+  )
+
+
+async def _encoded_tail(
+  chunks: AsyncGenerator[AudioChunk, None],
+  output_format: OutputFormat,
+  ffmpeg_path: str,
+) -> AsyncGenerator[bytes, None]:
+  try:
+    async for chunk in chunks:
+      yield await _encode_stream_chunk(chunk, output_format, ffmpeg_path)
+  finally:
+    await chunks.aclose()
+
+
+async def _encode_stream_chunk(
+  audio_chunk: AudioChunk,
+  output_format: OutputFormat,
+  ffmpeg_path: str,
+) -> bytes:
+  if output_format == 'mp3':
+    payload, _ = await asyncio.to_thread(encode_output, audio_chunk, 'mp3', ffmpeg_path)
+    return payload
+  return audio_chunk.pcm_bytes
 
 
 async def _stream_audio_chunks(
@@ -189,7 +256,7 @@ async def _stream_audio_chunks(
   stream_chunk_max_chars: int | None,
 ) -> AsyncGenerator[AudioChunk, None]:
   opened = await _open_native_stream(
-    spec.text, spec.voice, engines, timeout=engine_timeout
+    spec.text, spec.voice, spec.speed, engines, timeout=engine_timeout
   )
   if opened is not None:
     first, stream = opened
@@ -319,6 +386,7 @@ async def synthesize_to_disk(
         chunks=tuple(plan.chunks[i] for i in missing_indices),
         voice=plan.voice,
         output_format=plan.output_format,
+        speed=plan.speed,
       )
       synth_iter = synthesize_chunks(
         missing_plan,
@@ -342,7 +410,9 @@ async def synthesize_to_disk(
 
     # Merge and encode
     merged = merge_chunks(ordered_chunks)
-    payload, _ = encode_output(merged, spec.output_format, ffmpeg_path)
+    payload, _ = await asyncio.to_thread(
+      encode_output, merged, spec.output_format, ffmpeg_path
+    )
     final_path.write_bytes(payload)
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -363,6 +433,7 @@ async def synthesize_to_disk(
 async def _try_engines(
   text: str,
   voice: str,
+  speed: float,
   engines: list[TtsEngine],
   *,
   timeout: float,
@@ -375,7 +446,7 @@ async def _try_engines(
   for engine in engines:
     try:
       return await asyncio.wait_for(
-        engine.synthesize(text, voice=voice),
+        _synthesize_with_speed(engine, text, voice, speed),
         timeout=timeout,
       )
     except Exception as exc:
@@ -388,9 +459,20 @@ async def _try_engines(
   raise RuntimeError(f'all engines failed: {last_error}') from last_error
 
 
+async def _synthesize_with_speed(
+  engine: TtsEngine,
+  text: str,
+  voice: str,
+  speed: float,
+) -> AudioChunk:
+  chunk = await engine.synthesize(text, voice=voice, speed=speed)
+  return _with_speed_metadata(chunk, engine, speed)
+
+
 async def _open_native_stream(
   text: str,
   voice: str,
+  speed: float,
   engines: list[TtsEngine],
   *,
   timeout: float,
@@ -402,10 +484,13 @@ async def _open_native_stream(
 
   last_error: Exception | None = None
   for engine in candidates:
-    stream = engine.stream_synthesize(text, voice=voice)
+    stream = engine.stream_synthesize(text, voice=voice, speed=speed)
     try:
       first = await asyncio.wait_for(stream.__anext__(), timeout=timeout)
-      return first, stream
+      return (
+        _with_speed_metadata(first, engine, speed),
+        _speed_marked_stream(stream, engine, speed),
+      )
     except TimeoutError as exc:
       last_error = exc
       await stream.aclose()
@@ -426,6 +511,30 @@ async def _open_native_stream(
   if last_error is not None and len(candidates) == len(engines):
     raise last_error
   return None
+
+
+async def _speed_marked_stream(
+  stream: AsyncGenerator[AudioChunk, None],
+  engine: object,
+  speed: float,
+) -> AsyncGenerator[AudioChunk, None]:
+  try:
+    async for chunk in stream:
+      yield _with_speed_metadata(chunk, engine, speed)
+  finally:
+    await stream.aclose()
+
+
+def _with_speed_metadata(
+  chunk: AudioChunk,
+  engine: object,
+  speed: float,
+) -> AudioChunk:
+  if speed == 1.0 or not getattr(engine, 'applies_speed', False):
+    return chunk
+  if chunk.speed_applied == speed:
+    return chunk
+  return replace(chunk, speed_applied=speed)
 
 
 def _streaming_candidates(engines: list[TtsEngine]) -> list[StreamingTtsEngine]:
@@ -451,7 +560,7 @@ async def _aligned_native_tail(
       chunk = await asyncio.wait_for(stream.__anext__(), timeout=timeout)
     except StopAsyncIteration:
       return
-    yield align_chunk_format(chunk, reference, ffmpeg_path)
+    yield await asyncio.to_thread(align_chunk_format, chunk, reference, ffmpeg_path)
 
 
 async def _native_pcm_chunks(

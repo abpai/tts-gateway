@@ -6,6 +6,9 @@ All tests use a fake subclass — no real model files or heavy packages required
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
+from collections.abc import Iterator
 
 import pytest
 
@@ -55,7 +58,12 @@ class _FakeNativeEngine(LazyNativeEngine):
       raise self._load_raises
     self._device = 'cpu'
 
-  def _run_inference(self, text: str, voice: str | None = None) -> AudioChunk:
+  def _run_inference(
+    self,
+    text: str,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     self.inference_count += 1
     return self._inference_result
 
@@ -229,3 +237,90 @@ async def test_ensure_loaded_public() -> None:
   # Calling again is a no-op
   await engine.ensure_loaded()
   assert engine.load_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Blocking stream bridge
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_blocking_chunks_yields_in_order() -> None:
+  engine = _FakeNativeEngine()
+
+  def produce(stop: threading.Event) -> Iterator[AudioChunk]:
+    yield AudioChunk(b'one', 24_000, 1, 2)
+    yield AudioChunk(b'two', 24_000, 1, 2)
+
+  chunks = [
+    chunk.pcm_bytes
+    async for chunk in engine._stream_blocking_chunks(
+      produce, empty_error='empty stream'
+    )
+  ]
+
+  assert chunks == [b'one', b'two']
+
+
+@pytest.mark.asyncio
+async def test_stream_blocking_chunks_yields_first_before_later_work() -> None:
+  engine = _FakeNativeEngine()
+  second_allowed = threading.Event()
+
+  def produce(stop: threading.Event) -> Iterator[AudioChunk]:
+    yield AudioChunk(b'first', 24_000, 1, 2)
+    second_allowed.wait(timeout=1)
+    if not stop.is_set():
+      yield AudioChunk(b'second', 24_000, 1, 2)
+
+  stream = engine._stream_blocking_chunks(produce, empty_error='empty stream')
+  first = await asyncio.wait_for(stream.__anext__(), timeout=0.2)
+  assert first.pcm_bytes == b'first'
+  second_allowed.set()
+  await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_blocking_chunks_propagates_exception() -> None:
+  engine = _FakeNativeEngine()
+
+  def produce(stop: threading.Event) -> Iterator[AudioChunk]:
+    yield AudioChunk(b'first', 24_000, 1, 2)
+    raise EngineError('stream exploded')
+
+  stream = engine._stream_blocking_chunks(produce, empty_error='empty stream')
+  first = await stream.__anext__()
+  assert first.pcm_bytes == b'first'
+  with pytest.raises(EngineError, match='stream exploded'):
+    await stream.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_stream_blocking_chunks_early_abort_stops_worker() -> None:
+  engine = _FakeNativeEngine()
+  stopped = threading.Event()
+
+  def produce(stop: threading.Event) -> Iterator[AudioChunk]:
+    yield AudioChunk(b'first', 24_000, 1, 2)
+    while not stop.is_set():
+      time.sleep(0.005)
+    stopped.set()
+
+  stream = engine._stream_blocking_chunks(produce, empty_error='empty stream')
+  first = await stream.__anext__()
+  assert first.pcm_bytes == b'first'
+  await stream.aclose()
+  assert stopped.wait(timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_stream_blocking_chunks_empty_raises_engine_error() -> None:
+  engine = _FakeNativeEngine()
+
+  def produce(stop: threading.Event) -> Iterator[AudioChunk]:
+    if False:
+      yield AudioChunk(b'', 24_000, 1, 2)
+
+  with pytest.raises(EngineError, match='empty stream'):
+    async for _ in engine._stream_blocking_chunks(produce, empty_error='empty stream'):
+      pass

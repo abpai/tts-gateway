@@ -100,6 +100,9 @@ curl -X POST http://localhost:8000/v1/speech -F 'text=Hello world' -o output.mp3
 # With a specific voice
 curl -X POST http://localhost:8000/v1/speech -F 'text=Hello world' -F 'voice=af_heart' -o output.mp3
 
+# With native speed control when the selected engine supports it
+curl -X POST http://localhost:8000/v1/speech -F 'text=Hello world' -F 'speed=1.25' -o output.mp3
+
 # Legacy compatibility route
 curl -X POST http://localhost:8000/tts -F 'text=Hello world' -o output.mp3
 
@@ -109,7 +112,7 @@ curl -X POST http://localhost:8000/v1/jobs -F 'text=Hello world' | jq
 # Chunk-level audio streaming (always returns MP3)
 curl -X POST http://localhost:8000/tts/stream \
   -H 'Content-Type: application/json' \
-  -d '{"text":"Hello world"}' \
+  -d '{"text":"Hello world","speed":1.25}' \
   -o output.mp3
 
 # Raw PCM streaming (preferred for Raycast to avoid multi-chunk MP3 boundary risk)
@@ -172,7 +175,7 @@ All settings can be controlled via environment variables. CLI flags take precede
 | `TTS_PRIMARY_ENGINE`          | `kokoro`                      | Primary engine: `kokoro`, `pocket`, or `cosyvoice` |
 | `TTS_FALLBACK_ENGINE`         | `none`                        | Fallback engine: `kokoro`, `pocket`, `cosyvoice`, or `none` |
 | `TTS_OUTPUT_FORMAT`           | `mp3`                         | Output audio format: `wav` or `mp3`            |
-| `TTS_DEVICE_MODE`             | `auto`                        | Torch device: `auto`, `cpu`, `mps`, `cuda`     |
+| `TTS_DEVICE_MODE`             | `auto`                        | Torch device: `auto`, `cpu`, `mps`, `cuda`; Kokoro `auto` prefers CUDA then CPU, while `mps` remains opt-in |
 | `TTS_DEFAULT_VOICE`           | _(none)_                      | Default voice name                             |
 | `TTS_MODELS_DIR`              | `~/.cache/tts-gateway/models` | Model storage directory                        |
 | `TTS_GATEWAY_HOST`            | `127.0.0.1`                   | Bind address                                   |
@@ -186,11 +189,17 @@ All settings can be controlled via environment variables. CLI flags take precede
 | `TTS_DATA_DIR`                | `~/.cache/tts-gateway/data`   | Job store and artifact directory               |
 | `TTS_PIPELINE_VERSION`        | `1`                           | Cache-busting version for synthesis pipeline   |
 | `TTS_WORKER_POLL_SECONDS`     | `1.0`                         | Background worker poll interval                |
+| `TTS_WARMUP_ON_START`         | `true`                        | Start a non-blocking `/warmup` task during app startup |
 | `KOKORO_TTS_ENABLED`          | `true`                        | Enable/disable Kokoro engine                   |
 | `POCKET_TTS_ENABLED`          | `false`                       | Enable/disable Pocket TTS engine               |
 | `COSYVOICE_TTS_ENABLED`       | `false`                       | Enable/disable CosyVoice sidecar engine        |
 | `TTS_COSYVOICE_BASE_URL`      | `http://127.0.0.1:50000`      | CosyVoice sidecar base URL                     |
 | `TTS_COSYVOICE_REQUEST_TIMEOUT_SECONDS` | _(engine timeout)_  | CosyVoice sidecar request timeout              |
+
+Kokoro `TTS_DEVICE_MODE=auto` does not select MPS on Apple Silicon. For
+sentence-length Kokoro-82M synthesis, measured CPU latency was 0.26-0.51s
+versus 0.93-2.30s on MPS because per-shape kernel compilation dominates short
+requests. Set `TTS_DEVICE_MODE=mps` explicitly to opt in.
 
 ## Development
 
