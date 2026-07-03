@@ -66,7 +66,12 @@ class PocketNativeEngine(LazyNativeEngine):
     self._model = cast(_PocketModel, module.TTSModel.load_model())
     self._sample_rate = self._model.sample_rate
 
-  def _run_inference(self, text: str, voice: str | None = None) -> AudioChunk:
+  def _run_inference(
+    self,
+    text: str,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     import numpy as np
 
     model = self._model

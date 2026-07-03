@@ -9,6 +9,7 @@ Infrastructure:      /health, /warmup
 from __future__ import annotations
 
 import logging
+import math
 import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -22,13 +23,15 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from tts_gateway.audio import pcm_format_le
 from tts_gateway.config import GatewayConfig, load_config
 from tts_gateway.engines.base import AudioChunk, TtsEngine
-from tts_gateway.render import stream_audio, stream_pcm
+from tts_gateway.render import open_stream_audio, stream_pcm
 from tts_gateway.runtime import JobRuntime, NoEnginesError, run_worker_loop
 from tts_gateway.types import JobView, SynthesisSpec
 
 logger = logging.getLogger(__name__)
 
 _CLIENT_CLOSED_STATUS = 499
+_MIN_SPEED = 0.5
+_MAX_SPEED = 2.0
 
 
 @dataclass(frozen=True)
@@ -74,27 +77,56 @@ def _ext(content_type: str | None) -> str:
   return 'wav'
 
 
+def _clamp_speed(speed: float | None) -> float:
+  if speed is None:
+    return 1.0
+  if not math.isfinite(speed):
+    raise ValueError('speed must be finite')
+  return min(_MAX_SPEED, max(_MIN_SPEED, speed))
+
+
+def _speed_header(speed_applied: float | None) -> dict[str, str]:
+  if speed_applied is None:
+    return {}
+  return {'X-TTS-Speed-Applied': str(speed_applied)}
+
+
+async def _warmup_runtime(runtime: JobRuntime) -> None:
+  try:
+    await runtime.warmup()
+  except Exception:
+    logger.exception('startup warmup failed')
+
+
 def create_app(config: GatewayConfig | None = None) -> FastAPI:
   if config is None:
     config = load_config()
   runtime = JobRuntime(config)
 
   worker_task: list = []
+  warmup_task: list = []
 
   @asynccontextmanager
   async def lifespan(app: FastAPI):
     import asyncio
 
-    task = asyncio.create_task(
+    worker = asyncio.create_task(
       run_worker_loop(runtime, poll_seconds=config.worker_poll_seconds)
     )
-    worker_task.append(task)
+    worker_task.append(worker)
+    if config.warmup_on_start:
+      warmup_task.append(asyncio.create_task(_warmup_runtime(runtime)))
     yield
-    task.cancel()
+    worker.cancel()
+    for task in warmup_task:
+      if not task.done():
+        task.cancel()
     try:
-      await task
+      await worker
     except asyncio.CancelledError:
       pass
+    if warmup_task:
+      await asyncio.gather(*warmup_task, return_exceptions=True)
     runtime.close()
 
   app = FastAPI(title='TTS Gateway', version='0.3.0', lifespan=lifespan)
@@ -143,6 +175,7 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       'requestTimeoutSeconds': config.request_timeout_seconds,
       'engineTimeoutSeconds': config.engine_timeout_seconds,
       'defaultVoice': config.default_voice,
+      'warmupOnStart': config.warmup_on_start,
       'engineChain': runtime.engine_chain(),
       'engines': runtime.engine_info(),
     }
@@ -160,6 +193,7 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
   async def v1_speech(
     text: Annotated[str, Form(...)],
     voice: Annotated[str | None, Form()] = None,
+    speed: Annotated[float | None, Form()] = None,
   ) -> Response:
     normalized = text.strip()
     if not normalized:
@@ -168,7 +202,12 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       )
 
     try:
-      spec = runtime.make_spec(normalized, voice=voice)
+      clamped_speed = _clamp_speed(speed)
+    except ValueError as exc:
+      return JSONResponse(status_code=422, content={'error': str(exc)})
+
+    try:
+      spec = runtime.make_spec(normalized, voice=voice, speed=clamped_speed)
       artifact = await runtime.run_until_complete(
         spec, timeout=config.request_timeout_seconds
       )
@@ -296,8 +335,9 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
   ) -> StreamResponseParts:
     mp3_spec = replace(spec, output_format='mp3')
     audio_stream: AsyncGenerator[bytes, None] | None = None
+    speed_applied: float | None = None
     try:
-      audio_stream = stream_audio(
+      first_chunk, speed_applied, audio_stream = await open_stream_audio(
         mp3_spec,
         engines,
         concurrency=runtime.concurrency,
@@ -306,19 +346,20 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
         stream_first_chunk_max_chars=config.stream_first_chunk_max_chars,
         stream_chunk_max_chars=config.stream_chunk_max_chars,
       )
-      first_chunk = await audio_stream.__anext__()
     except Exception:
       await _close_stream(audio_stream)
       raise
+    headers = {
+      'X-TTS-Mode': 'stream',
+      'X-TTS-Primary-Engine': config.primary_engine,
+    }
+    headers.update(_speed_header(speed_applied))
     return StreamResponseParts(
       first_chunk=first_chunk,
       rest=audio_stream,
       close_stream=cast(AsyncGenerator[Any, None], audio_stream),
       media_type='audio/mpeg',
-      headers={
-        'X-TTS-Mode': 'stream',
-        'X-TTS-Primary-Engine': config.primary_engine,
-      },
+      headers=headers,
     )
 
   async def _open_pcm_stream(
@@ -340,19 +381,21 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     except Exception:
       await _close_stream(pcm_chunks)
       raise
+    headers = {
+      'X-TTS-Mode': 'stream-pcm',
+      'X-TTS-Primary-Engine': config.primary_engine,
+      'X-TTS-Sample-Rate': str(first_chunk.sample_rate),
+      'X-TTS-Channels': str(first_chunk.channels),
+      'X-TTS-Sample-Width': str(first_chunk.sample_width),
+      'X-TTS-Pcm-Format': pcm_format,
+    }
+    headers.update(_speed_header(first_chunk.speed_applied))
     return StreamResponseParts(
       first_chunk=first_chunk.pcm_bytes,
       rest=_pcm_tail_bytes(pcm_chunks),
       close_stream=cast(AsyncGenerator[Any, None], pcm_chunks),
       media_type='audio/raw',
-      headers={
-        'X-TTS-Mode': 'stream-pcm',
-        'X-TTS-Primary-Engine': config.primary_engine,
-        'X-TTS-Sample-Rate': str(first_chunk.sample_rate),
-        'X-TTS-Channels': str(first_chunk.channels),
-        'X-TTS-Sample-Width': str(first_chunk.sample_width),
-        'X-TTS-Pcm-Format': pcm_format,
-      },
+      headers=headers,
     )
 
   async def _close_stream(stream: AsyncGenerator[Any, None] | None) -> None:
@@ -383,6 +426,7 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     request: Request,
     text: str,
     voice: str | None,
+    speed: float | None,
     *,
     open_stream: StreamOpener,
   ) -> Response:
@@ -393,7 +437,12 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     if abort := await abort_on_client_disconnect(request):
       return abort
 
-    spec = runtime.make_spec(normalized, voice=voice)
+    try:
+      clamped_speed = _clamp_speed(speed)
+    except ValueError as exc:
+      return JSONResponse(status_code=422, content={'error': str(exc)})
+
+    spec = runtime.make_spec(normalized, voice=voice, speed=clamped_speed)
     parts = await _open_stream_parts(spec, engines, open_stream)
     if isinstance(parts, JSONResponse):
       return parts
@@ -410,11 +459,13 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     request: Request,
     text: Annotated[str, Body()],
     voice: Annotated[str | None, Body()] = None,
+    speed: Annotated[float | None, Body()] = None,
   ) -> Response:
     return await _stream_tts_response(
       request,
       text,
       voice,
+      speed,
       open_stream=_open_mp3_stream,
     )
 
@@ -423,11 +474,13 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     request: Request,
     text: Annotated[str, Body()],
     voice: Annotated[str | None, Body()] = None,
+    speed: Annotated[float | None, Body()] = None,
   ) -> Response:
     return await _stream_tts_response(
       request,
       text,
       voice,
+      speed,
       open_stream=_open_pcm_stream,
     )
 
@@ -439,22 +492,24 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
   async def legacy_tts_sync(
     text: Annotated[str, Form(...)],
     voice: Annotated[str | None, Form()] = None,
+    speed: Annotated[float | None, Form()] = None,
   ) -> Response:
     logger.info('legacy-route: POST /tts/sync → /v1/speech')
-    return await v1_speech(text=text, voice=voice)
+    return await v1_speech(text=text, voice=voice, speed=speed)
 
   @app.post('/tts')
   async def legacy_tts(
     request: Request,
     text: Annotated[str, Form(...)],
     voice: Annotated[str | None, Form()] = None,
+    speed: Annotated[float | None, Form()] = None,
   ) -> Response:
     accept = request.headers.get('accept', '')
     if accept == 'application/json':
       logger.info('legacy-route: POST /tts (json) → /v1/jobs')
       return await v1_jobs_submit(text=text, voice=voice)
     logger.info('legacy-route: POST /tts → /v1/speech')
-    return await v1_speech(text=text, voice=voice)
+    return await v1_speech(text=text, voice=voice, speed=speed)
 
   @app.get('/tts/{job_key}')
   async def legacy_tts_status(job_key: str) -> Response:

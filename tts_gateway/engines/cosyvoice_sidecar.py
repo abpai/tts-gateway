@@ -37,7 +37,11 @@ class CosyVoiceSidecarEngine(TtsEngine):
     }
 
   async def stream_synthesize(
-    self, text: str, *, voice: str | None = None
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
   ) -> AsyncGenerator[AudioChunk, None]:
     if not self._enabled:
       raise EngineError('cosyvoice engine is disabled')
@@ -81,9 +85,15 @@ class CosyVoiceSidecarEngine(TtsEngine):
     except httpx.RequestError as exc:
       raise EngineError(f'cosyvoice sidecar unreachable: {exc}') from exc
 
-  async def synthesize(self, text: str, *, voice: str | None = None) -> AudioChunk:
+  async def synthesize(
+    self,
+    text: str,
+    *,
+    voice: str | None = None,
+    speed: float = 1.0,
+  ) -> AudioChunk:
     chunks: list[AudioChunk] = []
-    async for chunk in self.stream_synthesize(text, voice=voice):
+    async for chunk in self.stream_synthesize(text, voice=voice, speed=speed):
       chunks.append(chunk)
     if not chunks:
       raise EngineError('cosyvoice sidecar returned no audio')

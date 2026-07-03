@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from collections.abc import AsyncGenerator
 
 import pytest
 
@@ -16,7 +18,7 @@ from tests.conftest import (
   SlowStreamEngine,
   StaggeredEngine,
 )
-from tts_gateway.engines.base import EngineError
+from tts_gateway.engines.base import AudioChunk, EngineError
 from tts_gateway.render import (
   plan_chunks,
   plan_stream_chunks,
@@ -82,6 +84,19 @@ def test_content_hash_varies_with_cache_namespace() -> None:
     cache_namespace='engines=cosyvoice',
   )
   assert r1.content_hash != r2.content_hash
+
+
+def test_content_hash_varies_with_non_default_speed() -> None:
+  r1 = SynthesisSpec(text='hello', voice='v', output_format='wav')
+  r2 = SynthesisSpec(text='hello', voice='v', output_format='wav', speed=1.25)
+  assert r1.content_hash != r2.content_hash
+
+
+def test_content_hash_omits_default_speed_for_compatibility() -> None:
+  r1 = SynthesisSpec(text='hello', voice='v', output_format='wav')
+  r2 = SynthesisSpec(text='hello', voice='v', output_format='wav', speed=1.0)
+  assert r1.to_json() == r2.to_json()
+  assert r1.content_hash == r2.content_hash
 
 
 def test_to_json_from_json_roundtrip() -> None:
@@ -342,6 +357,28 @@ async def test_stream_audio_mp3_yields_encoded(monkeypatch) -> None:
   assert parts == [b'fake-mp3']
 
 
+@pytest.mark.asyncio
+async def test_stream_audio_mp3_encodes_off_event_loop(monkeypatch) -> None:
+  engine = MockEngine('mock')
+  request = SynthesisSpec(text='hello', voice='v', output_format='mp3')
+  event_loop_thread = threading.current_thread()
+  encode_threads: list[threading.Thread] = []
+
+  def fake_encode_output(chunk, fmt, ffmpeg):
+    encode_threads.append(threading.current_thread())
+    return b'fake-mp3', 'audio/mpeg'
+
+  monkeypatch.setattr('tts_gateway.render.encode_output', fake_encode_output)
+
+  parts = []
+  async for data in stream_audio(request, [engine], concurrency=4, engine_timeout=10):
+    parts.append(data)
+
+  assert parts == [b'fake-mp3']
+  assert encode_threads
+  assert encode_threads[0] is not event_loop_thread
+
+
 # ---------------------------------------------------------------------------
 # native streaming engines
 # ---------------------------------------------------------------------------
@@ -413,6 +450,46 @@ async def test_stream_native_receives_full_text_and_voice() -> None:
 
   assert streaming.stream_calls == [(text, 'requested-voice')]
   assert len(chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_pcm_marks_speed_when_streaming_engine_applies_it() -> None:
+  class SpeedStreamingEngine(MockStreamingEngine):
+    applies_speed = True
+
+    def __init__(self) -> None:
+      super().__init__('speed-stream')
+      self.speeds: list[float] = []
+
+    async def stream_synthesize(
+      self,
+      text: str,
+      *,
+      voice: str | None = None,
+      speed: float = 1.0,
+    ) -> AsyncGenerator[AudioChunk, None]:
+      self.speeds.append(speed)
+      yield DUMMY_CHUNK
+
+  engine = SpeedStreamingEngine()
+  request = SynthesisSpec(text='hello', voice='v', output_format='wav', speed=1.5)
+
+  first, rest = await stream_pcm(request, [engine], engine_timeout=10)
+  await rest.aclose()
+
+  assert engine.speeds == [1.5]
+  assert first.speed_applied == 1.5
+
+
+@pytest.mark.asyncio
+async def test_stream_pcm_does_not_mark_speed_for_unsupported_engine() -> None:
+  engine = MockStreamingEngine('stream')
+  request = SynthesisSpec(text='hello', voice='v', output_format='wav', speed=1.5)
+
+  first, rest = await stream_pcm(request, [engine], engine_timeout=10)
+  await rest.aclose()
+
+  assert first.speed_applied is None
 
 
 @pytest.mark.asyncio
