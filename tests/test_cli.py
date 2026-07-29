@@ -845,3 +845,37 @@ def test_keyboard_interrupt_exits_130(monkeypatch: pytest.MonkeyPatch) -> None:
     cli.main(['speak', 'hi'])
 
   assert excinfo.value.code == 130
+
+
+@pytest.mark.skipif(
+  subprocess.run(['which', 'ffplay'], capture_output=True, check=False).returncode != 0,
+  reason='ffplay not installed',
+)
+@pytest.mark.parametrize(
+  'format_args',
+  [
+    ('-f', 'mp3', '-fflags', 'nobuffer'),
+    ('-f', 's16le', '-ar', '24000', '-ch_layout', 'mono', '-fflags', 'nobuffer'),
+  ],
+)
+def test_real_ffplay_accepts_our_argv(format_args: tuple[str, ...]) -> None:
+  """Contract test against the real binary: mocked argv tests cannot catch
+  flags ffplay rejects (e.g. -ac, which is an ffmpeg-only option)."""
+  result = subprocess.run(
+    [
+      'ffplay',
+      '-autoexit',
+      '-nodisp',
+      '-loglevel',
+      'error',
+      *format_args,
+      '-i',
+      'pipe:0',
+    ],
+    input=b'',
+    capture_output=True,
+    timeout=30,
+    check=False,
+  )
+
+  assert b'Option not found' not in result.stderr

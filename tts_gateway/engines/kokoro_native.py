@@ -14,6 +14,13 @@ from tts_gateway.engines.native_engine import LazyNativeEngine
 SAMPLE_RATE = 24_000
 KOKORO_REPO_ID = 'hexgrad/Kokoro-82M'
 KOKORO_MODEL_FILE = 'kokoro-v1_0.pth'
+# misaki (kokoro's G2P) needs this spaCy model; it must be preinstalled
+# because its own auto-download uses pip, which uv environments lack.
+SPACY_MODEL_NAME = 'en_core_web_sm'
+SPACY_MODEL_URL = (
+  'https://github.com/explosion/spacy-models/releases/download/'
+  'en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl'
+)
 # Sentence-or-newline segmentation for KPipeline (mirrors
 # chunking.SENTENCE_BOUNDARY, plus the pipeline's own newline default).
 _SEGMENT_SPLIT_PATTERN = r'(?<=[.!?])\s+|\n+'
@@ -96,6 +103,22 @@ class KokoroNativeEngine(LazyNativeEngine):
     status['model'] = KOKORO_REPO_ID
     return status
 
+  @staticmethod
+  def _require_spacy_model() -> None:
+    """Fail fast if misaki's spaCy model is missing.
+
+    Without this, misaki attempts a pip download at first synthesis, which
+    crashes in pip-less (uv) environments and turns into an opaque HTTP 500.
+    """
+    spacy_util = import_module('spacy.util')
+    if spacy_util.is_package(SPACY_MODEL_NAME):
+      return
+    raise RuntimeError(
+      f'spaCy model {SPACY_MODEL_NAME!r} is not installed; '
+      f'run: uv sync --group dev --extra kokoro (dev checkout) or '
+      f'uv pip install {SPACY_MODEL_URL}'
+    )
+
   # ------------------------------------------------------------------
   # LazyNativeEngine contract
   # ------------------------------------------------------------------
@@ -103,6 +126,7 @@ class KokoroNativeEngine(LazyNativeEngine):
   def _load_model(self) -> None:
     import os
 
+    self._require_spacy_model()
     hf_home = os.path.join(self.models_dir, 'huggingface')
     # Side-effect: sets HF_HOME so Hugging Face Hub caches models under
     # the configured models_dir rather than the default ~/.cache/huggingface.

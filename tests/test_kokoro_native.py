@@ -137,3 +137,24 @@ async def test_stream_synthesize_empty_output_raises() -> None:
   with pytest.raises(EngineError, match='kokoro produced no audio output'):
     async for _ in engine.stream_synthesize('Hello'):
       pass
+
+
+def test_require_spacy_model_passes_when_installed(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  monkeypatch.setitem(
+    sys.modules, 'spacy.util', SimpleNamespace(is_package=lambda name: True)
+  )
+
+  kokoro_native.KokoroNativeEngine._require_spacy_model()
+
+
+def test_require_spacy_model_fails_fast_with_install_hint(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  monkeypatch.setitem(
+    sys.modules, 'spacy.util', SimpleNamespace(is_package=lambda name: False)
+  )
+
+  with pytest.raises(RuntimeError, match=r'en_core_web_sm.*uv'):
+    kokoro_native.KokoroNativeEngine._require_spacy_model()

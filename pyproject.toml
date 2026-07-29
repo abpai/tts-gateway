@@ -36,6 +36,12 @@ dev = [
     "pytest-cov>=7.0.0",
     "ruff>=0.14.10",
     "ty>=0.0.5",
+    # misaki's spaCy model for the kokoro extra. Lives in the dev group, not
+    # the kokoro extra: PyPI rejects published deps with direct URLs, and
+    # dependency-groups never ship in the wheel. Tool installs must pass
+    # --with <this url> (documented in README); kokoro_native fails fast
+    # with that hint when the model is missing.
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
 ]
 
 [build-system]

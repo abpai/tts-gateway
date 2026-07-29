@@ -23,22 +23,16 @@ This installs a `tts` binary in `~/.local/bin/`.
 
 ### spaCy model (Kokoro only)
 
-Kokoro depends on [misaki](https://github.com/hexgrad/misaki) for grapheme-to-phoneme conversion, which needs a spaCy English model. On first request, misaki tries to download `en_core_web_sm` via `spacy.cli.download`, but that shells out to `pip install` — which doesn't exist inside `uv tool` environments. You'll get a `SystemExit: 1` crash on the first TTS call.
+Kokoro depends on [misaki](https://github.com/hexgrad/misaki) for grapheme-to-phoneme conversion, which needs the spaCy `en_core_web_sm` model. misaki's own auto-download shells out to `pip`, which does not exist in uv environments, so the gateway refuses to load the Kokoro engine when the model is missing and reports the install command instead of crashing mid-request.
 
-Install the model manually into the tool's venv:
-
-```bash
-~/.local/share/uv/tools/tts-gateway/bin/python -m spacy download en_core_web_sm
-```
-
-### Upgrading
-
-`uv tool upgrade` recreates the virtual environment, so the spaCy model must be reinstalled after every upgrade:
+Install the tool with the model wheel alongside it (uv records `--with` in the tool receipt, so it survives `uv tool upgrade` and `tts update`):
 
 ```bash
-uv tool upgrade tts-gateway
-~/.local/share/uv/tools/tts-gateway/bin/python -m spacy download en_core_web_sm
+uv tool install tts-gateway[kokoro] \
+  --with https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 ```
+
+Development checkouts get the model automatically from the dev dependency group via `uv sync --group dev --extra kokoro`.
 
 For local development, see [Development](#development) below.
 
