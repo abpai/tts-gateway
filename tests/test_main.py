@@ -199,3 +199,25 @@ def test_legacy_tts_sync_carries_deprecation_header() -> None:
   response = client.post('/tts/sync', data={'text': 'hello world'})
 
   assert response.headers.get('Deprecation') == 'true'
+
+
+def test_legacy_validation_errors_carry_deprecation_header() -> None:
+  """FastAPI's own 422 responses on /tts/* must also carry the header."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post('/tts/stream', json={'voice': 'af_heart'})
+
+  assert response.status_code == 422
+  assert response.headers.get('Deprecation') == 'true'
+
+
+def test_v1_speech_rejects_out_of_range_json_speed() -> None:
+  """A JSON integer too large for float must yield 422, not 500."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post('/v1/speech', json={'text': 'hello', 'speed': 10**400})
+
+  assert response.status_code == 422
+  assert 'speed' in response.json()['error']

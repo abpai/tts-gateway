@@ -17,6 +17,7 @@ from tts_gateway.speech_cli import (
   SpeakOptions,
   SpeechCliError,
   _consume_audio,
+  _encoded_ffplay_args,
   _open_output,
   _pcm_ffplay_args,
   _Player,
@@ -352,6 +353,48 @@ def test_pcm_ffplay_args_falls_back_to_defaults_when_headers_missing() -> None:
     '-fflags',
     'nobuffer',
   )
+
+
+def test_encoded_ffplay_args_maps_content_type_to_demuxer() -> None:
+  mp3 = httpx.Response(200, headers={'content-type': 'audio/mpeg'})
+  wav = httpx.Response(200, headers={'content-type': 'audio/wav; charset=binary'})
+
+  assert _encoded_ffplay_args(mp3) == ('-f', 'mp3', '-fflags', 'nobuffer')
+  assert _encoded_ffplay_args(wav) == ('-f', 'wav', '-fflags', 'nobuffer')
+
+
+def test_encoded_ffplay_args_assumes_mp3_when_content_type_missing() -> None:
+  response = httpx.Response(200)
+
+  assert _encoded_ffplay_args(response) == ('-f', 'mp3', '-fflags', 'nobuffer')
+
+
+def test_encoded_ffplay_args_probes_on_unknown_content_type() -> None:
+  response = httpx.Response(200, headers={'content-type': 'audio/ogg'})
+
+  assert _encoded_ffplay_args(response) == ('-fflags', 'nobuffer')
+
+
+def test_speak_no_stream_wav_gateway_uses_wav_demuxer(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  def respond(request: httpx.Request) -> httpx.Response:
+    assert request.url.path == '/v1/speech'
+    return httpx.Response(
+      200, content=b'wav-bytes', headers={'content-type': 'audio/wav'}
+    )
+
+  transport = httpx.MockTransport(respond)
+  _patch_client(monkeypatch, transport)
+  _patch_which_finds_everything(monkeypatch)
+  processes = _patch_popen(monkeypatch)
+
+  options = SpeakOptions('hello', 'http://gateway', stream=False)
+  speak(options, _FakeStdout(tty=True))
+
+  argv = processes[0].argv
+  assert argv[argv.index('-f') + 1] == 'wav'
+  assert b''.join(processes[0].stdin.chunks) == b'wav-bytes'
 
 
 def test_no_play_writes_audio_to_stdout() -> None:

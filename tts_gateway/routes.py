@@ -94,12 +94,6 @@ def _speed_header(speed_applied: float | None) -> dict[str, str]:
   return {'X-TTS-Speed-Applied': str(speed_applied)}
 
 
-def _with_deprecation(response: Response) -> Response:
-  """Mark a legacy shim response as deprecated."""
-  response.headers['Deprecation'] = 'true'
-  return response
-
-
 async def _warmup_runtime(runtime: JobRuntime) -> None:
   try:
     await runtime.warmup()
@@ -162,6 +156,11 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       },
     )
     response.headers['x-request-id'] = request_id
+    # Every /tts* route is a legacy shim. Stamping here (not per-route)
+    # also covers responses the handlers never see, e.g. FastAPI's own
+    # 422 validation errors.
+    if request.url.path.startswith('/tts'):
+      response.headers['Deprecation'] = 'true'
     return response
 
   # -----------------------------------------------------------------------
@@ -277,7 +276,12 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       return JSONResponse(
         status_code=422, content={'error': 'Field "speed" must be a number'}
       )
-    speed = float(speed_raw) if speed_raw is not None else None
+    try:
+      speed = float(speed_raw) if speed_raw is not None else None
+    except OverflowError:
+      return JSONResponse(
+        status_code=422, content={'error': 'Field "speed" is out of range'}
+      )
 
     return text, voice, speed
 
@@ -566,10 +570,9 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     speed: Annotated[float | None, Body()] = None,
   ) -> Response:
     logger.info('legacy-route: POST /tts/stream → /v1/speech/stream')
-    response = await v1_speech_stream(
+    return await v1_speech_stream(
       request, text=text, voice=voice, speed=speed, speech_format='mp3'
     )
-    return _with_deprecation(response)
 
   @app.post('/tts/stream/pcm')
   async def tts_stream_pcm(
@@ -579,10 +582,9 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     speed: Annotated[float | None, Body()] = None,
   ) -> Response:
     logger.info('legacy-route: POST /tts/stream/pcm → /v1/speech/stream')
-    response = await v1_speech_stream(
+    return await v1_speech_stream(
       request, text=text, voice=voice, speed=speed, speech_format='pcm'
     )
-    return _with_deprecation(response)
 
   # -----------------------------------------------------------------------
   # Legacy shims (forward to canonical routes)
@@ -595,8 +597,7 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     speed: Annotated[float | None, Form()] = None,
   ) -> Response:
     logger.info('legacy-route: POST /tts/sync → /v1/speech')
-    response = await _speech_response(text, voice, speed)
-    return _with_deprecation(response)
+    return await _speech_response(text, voice, speed)
 
   @app.post('/tts')
   async def legacy_tts(
@@ -608,17 +609,14 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     accept = request.headers.get('accept', '')
     if accept == 'application/json':
       logger.info('legacy-route: POST /tts (json) → /v1/jobs')
-      response = await v1_jobs_submit(text=text, voice=voice)
-      return _with_deprecation(response)
+      return await v1_jobs_submit(text=text, voice=voice)
     logger.info('legacy-route: POST /tts → /v1/speech')
-    response = await _speech_response(text, voice, speed)
-    return _with_deprecation(response)
+    return await _speech_response(text, voice, speed)
 
   @app.get('/tts/{job_key}')
   async def legacy_tts_status(job_key: str) -> Response:
     logger.info('legacy-route: GET /tts/%s → /v1/jobs/%s', job_key[:16], job_key[:16])
-    response = await v1_jobs_status(job_key=job_key)
-    return _with_deprecation(response)
+    return await v1_jobs_status(job_key=job_key)
 
   @app.get('/tts/{job_key}/audio')
   async def legacy_tts_audio(job_key: str) -> Response:
@@ -627,7 +625,6 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       job_key[:16],
       job_key[:16],
     )
-    response = await v1_jobs_audio(job_key=job_key)
-    return _with_deprecation(response)
+    return await v1_jobs_audio(job_key=job_key)
 
   return app

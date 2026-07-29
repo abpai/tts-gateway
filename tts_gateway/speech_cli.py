@@ -19,7 +19,14 @@ _FORMAT_CONTENT_TYPES = {
   '.wav': 'audio/wav',
 }
 
-_MP3_FFPLAY_ARGS: tuple[str, ...] = ('-f', 'mp3', '-fflags', 'nobuffer')
+# ffplay demuxer names by response content type; a known format is passed via
+# -f so ffplay skips stream probing. An unknown content type falls back to
+# probing, and a missing header assumes mp3 (the streaming route's format).
+_CONTENT_TYPE_FFPLAY_FORMATS = {
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+}
 
 # Fallback PCM parameters if the gateway ever omits an X-TTS-* PCM header;
 # match the server's own kokoro/base-engine defaults (24kHz mono 16-bit).
@@ -160,7 +167,9 @@ def speak(options: SpeakOptions, stdout: BinaryIO) -> None:
           _raise_response_error(response)
           _warn_format_mismatch(response, options)
           if ffplay_path is not None:
-            format_args = _pcm_ffplay_args(response) if play_pcm else _MP3_FFPLAY_ARGS
+            format_args = (
+              _pcm_ffplay_args(response) if play_pcm else _encoded_ffplay_args(response)
+            )
             player = _Player.start(ffplay_path, format_args)
           body_completed = _consume_audio(
             response, output, player, flush_output=flush_output
@@ -263,6 +272,21 @@ def _wants_pcm(options: SpeakOptions, stdout: BinaryIO) -> bool:
   if not options.stream or not options.play or options.output is not None:
     return False
   return bool(getattr(stdout, 'isatty', lambda: False)())
+
+
+def _encoded_ffplay_args(response: httpx.Response) -> tuple[str, ...]:
+  """Build ffplay args for an encoded (mp3/wav) stream from its Content-Type.
+
+  The non-streaming /v1/speech route returns the gateway's configured format,
+  which may be wav — telling ffplay the wrong format would break playback.
+  """
+  content_type = response.headers.get('content-type', '').split(';')[0].strip().lower()
+  if not content_type:
+    return ('-f', 'mp3', '-fflags', 'nobuffer')
+  ffplay_format = _CONTENT_TYPE_FFPLAY_FORMATS.get(content_type)
+  if ffplay_format is None:
+    return ('-fflags', 'nobuffer')  # unknown format: let ffplay probe
+  return ('-f', ffplay_format, '-fflags', 'nobuffer')
 
 
 def _pcm_ffplay_args(response: httpx.Response) -> tuple[str, ...]:
