@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,11 @@ from typing import Any, BinaryIO, TextIO
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
+
+_FORMAT_CONTENT_TYPES = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+}
 
 
 class SpeechCliError(Exception):
@@ -52,10 +58,10 @@ class HealthReport(BaseModel):
   chunk_max_chars: int = Field(alias='chunkMaxChars')
 
 
-def read_speak_text(arguments: list[str], stdin: TextIO) -> str:
+def read_speak_text(arguments: list[str], stdin: TextIO | None) -> str:
   """Read text from arguments or standard input."""
   text = ' '.join(arguments).strip()
-  if not text and not stdin.isatty():
+  if not text and stdin is not None and not stdin.isatty():
     text = stdin.read().strip()
   if not text:
     raise SpeechCliError('text is required as an argument or on stdin')
@@ -63,20 +69,31 @@ def read_speak_text(arguments: list[str], stdin: TextIO) -> str:
 
 
 def speak(options: SpeakOptions, stdout: BinaryIO) -> None:
-  """Stream synthesized audio to playback, a file, or standard output."""
+  """Stream synthesized audio to playback, a file, or standard output.
+
+  Opens the output sink and spawns the player before sending the request, so
+  a bad --output path or a missing ffplay binary fails before synthesis runs.
+  """
   timeout = httpx.Timeout(
     connect=options.connect_timeout,
-    read=None,
+    read=300,
     write=30,
     pool=options.connect_timeout,
   )
-  try:
-    with httpx.Client(timeout=timeout) as client:
-      with _speech_response(client, options) as response:
-        _raise_response_error(response)
-        _consume_audio(response, options, stdout)
-  except httpx.HTTPError as exc:
-    raise SpeechCliError(f'gateway request failed: {exc}') from exc
+  with ExitStack() as stack:
+    output = _open_output(stack, options, stdout)
+    player = _open_player(options) if options.play else None
+    body_completed = False
+    try:
+      with httpx.Client(timeout=timeout) as client:
+        with _speech_response(client, options) as response:
+          _raise_response_error(response)
+          _warn_format_mismatch(response, options)
+          body_completed = _consume_audio(response, output, player)
+    except httpx.HTTPError as exc:
+      raise SpeechCliError(f'gateway request failed: {exc}') from exc
+    finally:
+      _finish_player(player, body_completed=body_completed)
 
 
 def fetch_health(base_url: str, timeout: float) -> HealthReport:
@@ -108,8 +125,6 @@ def format_config(report: HealthReport, base_url: str) -> str:
     ('Default voice', report.default_voice or 'engine default'),
     ('Default speed', report.default_speed),
     ('Output format', report.output_format),
-    ('Streaming', 'enabled'),
-    ('Playback', 'enabled'),
     ('Chunk concurrency', report.chunk_concurrency),
     ('Chunk size', report.chunk_max_chars),
   ]
@@ -142,21 +157,46 @@ def _raise_response_error(response: httpx.Response) -> None:
   raise SpeechCliError(f'gateway returned HTTP {response.status_code}: {message}')
 
 
+def _warn_format_mismatch(response: httpx.Response, options: SpeakOptions) -> None:
+  """Warn on stderr when --output's suffix disagrees with the response format.
+
+  Only applies to non-streaming requests: /v1/speech returns the gateway's
+  configured output format, which may not match the suffix the caller chose.
+  """
+  if options.stream or options.output is None:
+    return
+  expected = _FORMAT_CONTENT_TYPES.get(options.output.suffix.lower())
+  if expected is None:
+    return
+  content_type = response.headers.get('content-type', '').split(';')[0].strip().lower()
+  if content_type and content_type != expected:
+    print(
+      f'warning: gateway returned {content_type}, but output path is '
+      f'{options.output.suffix}',
+      file=sys.stderr,
+    )
+
+
 def _consume_audio(
   response: httpx.Response,
-  options: SpeakOptions,
-  stdout: BinaryIO,
-) -> None:
-  with ExitStack() as stack:
-    output = _open_output(stack, options, stdout)
-    player = _open_player(options) if options.play else None
+  output: BinaryIO,
+  player: subprocess.Popen[bytes] | None,
+) -> bool:
+  """Write streamed audio chunks to the output sink and player.
+
+  Returns True if the response body was read to completion. Stops cleanly
+  (returning False) if a downstream pipe closes early, e.g. `head` truncating
+  piped stdout, or the user quitting ffplay.
+  """
+  for chunk in response.iter_bytes():
     try:
-      for chunk in response.iter_bytes():
-        output.write(chunk)
-        if player is not None and player.stdin is not None:
-          player.stdin.write(chunk)
-    finally:
-      _finish_player(player)
+      output.write(chunk)
+      if player is not None and player.stdin is not None:
+        player.stdin.write(chunk)
+        player.stdin.flush()
+    except BrokenPipeError:
+      return False
+  return True
 
 
 def _open_output(
@@ -165,9 +205,19 @@ def _open_output(
   stdout: BinaryIO,
 ) -> BinaryIO:
   if options.output is not None:
-    return stack.enter_context(options.output.open('wb'))
+    try:
+      return stack.enter_context(options.output.open('wb'))
+    except OSError as exc:
+      raise SpeechCliError(f'cannot open output file: {exc}') from exc
+  is_tty = getattr(stdout, 'isatty', lambda: False)()
   if options.play:
-    return stack.enter_context(Path(os.devnull).open('wb'))
+    if is_tty:
+      return stack.enter_context(Path(os.devnull).open('wb'))
+    return stdout  # tee: redirected stdout also receives the audio bytes
+  if is_tty:
+    raise SpeechCliError(
+      'refusing to write binary audio to a terminal; use --output or redirect stdout'
+    )
   return stdout
 
 
@@ -189,11 +239,22 @@ def _open_player(options: SpeakOptions) -> subprocess.Popen[bytes]:
   )
 
 
-def _finish_player(player: subprocess.Popen[bytes] | None) -> None:
+def _finish_player(
+  player: subprocess.Popen[bytes] | None, *, body_completed: bool
+) -> None:
+  """Wait for the player and surface a real failure, without masking earlier errors.
+
+  A non-zero exit only counts as an error if the streaming body finished
+  without incident; a negative return code (killed by signal, e.g. Ctrl-C)
+  or an early user quit is a normal stop, not an error.
+  """
   if player is None:
     return
   if player.stdin is not None:
-    player.stdin.close()
+    try:
+      player.stdin.close()
+    except BrokenPipeError:
+      pass
   return_code = player.wait()
-  if return_code != 0:
+  if body_completed and return_code > 0:
     raise SpeechCliError(f'ffplay exited with status {return_code}')

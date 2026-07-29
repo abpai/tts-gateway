@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import logging
 import os
 import shutil
@@ -21,17 +20,10 @@ from tts_gateway.speech_cli import (
   read_speak_text,
   speak,
 )
+from tts_gateway.version import package_version
 
 _NOISY_LOGGERS = ('httpcore', 'httpx', 'urllib3', 'filelock')
 _QUIET_LOGGERS = ('huggingface_hub',)  # suppress HF token nag
-
-
-def package_version() -> str:
-  """Return the installed package version."""
-  try:
-    return importlib.metadata.version('tts-gateway')
-  except importlib.metadata.PackageNotFoundError:
-    return 'unknown'
 
 
 def _suppress_third_party_warnings() -> None:
@@ -174,7 +166,7 @@ def _add_speak_parser(sub: argparse._SubParsersAction) -> None:
   speak_parser.add_argument(
     'text', nargs='*', help='Text to speak; reads stdin if omitted'
   )
-  _add_gateway_args(speak_parser)
+  _add_gateway_args(speak_parser, timeout_label='Connection')
   speak_parser.add_argument('--voice', help='Voice name')
   speak_parser.add_argument('--speed', type=float, help='Speech speed')
   speak_parser.add_argument('-o', '--output', type=Path, help='Write audio to a file')
@@ -187,7 +179,10 @@ def _add_speak_behavior_args(parser: argparse.ArgumentParser) -> None:
     '--play',
     action=argparse.BooleanOptionalAction,
     default=True,
-    help='Play audio while it arrives (default: enabled)',
+    help=(
+      'Play audio while it arrives (default: enabled); without --output, '
+      'redirected stdout also receives the audio bytes'
+    ),
   )
   parser.add_argument(
     '--stream',
@@ -209,7 +204,9 @@ def _add_status_parsers(sub: argparse._SubParsersAction) -> None:
   _add_gateway_args(config)
 
 
-def _add_gateway_args(parser: argparse.ArgumentParser) -> None:
+def _add_gateway_args(
+  parser: argparse.ArgumentParser, *, timeout_label: str = 'Request'
+) -> None:
   """Add gateway connection options."""
   parser.add_argument(
     '--base-url',
@@ -220,7 +217,7 @@ def _add_gateway_args(parser: argparse.ArgumentParser) -> None:
     '--timeout',
     type=float,
     default=5.0,
-    help='Health request timeout in seconds (default: 5)',
+    help=f'{timeout_label} timeout in seconds (default: 5)',
   )
 
 
@@ -246,6 +243,8 @@ def main(argv: list[str] | None = None) -> None:
       parser.exit(1)
   except SpeechCliError as exc:
     parser.exit(1, f'error: {exc}\n')
+  except KeyboardInterrupt:
+    parser.exit(130)
 
 
 def _run_speak(args: argparse.Namespace) -> None:
@@ -293,7 +292,11 @@ def _run_update() -> None:
   )
   if result.returncode != 0:
     raise SpeechCliError('uv could not update tts-gateway')
-  print(f'tts {package_version()}')
+  tts_path = shutil.which('tts')
+  if tts_path is not None:
+    # Report the freshly installed binary's version, not this process's
+    # (potentially now-stale) in-memory package_version().
+    subprocess.run([tts_path, '--version'], check=False)
 
 
 def _run_serve(args: argparse.Namespace) -> None:

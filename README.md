@@ -112,14 +112,27 @@ tts speak 'Hello world'
 cat /tmp/speak_it.txt | tts speak
 ```
 
-Streaming and playback are enabled by default. Disable playback to write MP3
-audio to a file or standard output:
+Streaming and playback are enabled by default. When stdout is redirected,
+`tts speak` tees the audio to stdout while still playing it, so this saves a
+file and plays it at the same time:
+
+```bash
+tts speak 'Hello world' > speech.mp3
+```
+
+Use `--output` to write a file without depending on shell redirection, or
+`--no-play` to skip playback entirely:
 
 ```bash
 tts speak 'Hello world' --no-play --output speech.mp3
 cat /tmp/speak_it.txt | tts speak --no-play > speech.mp3
 tts speak 'Hello world' --no-stream
 ```
+
+`--no-play` without `--output` refuses to run when stdout is a terminal,
+since it would otherwise dump binary audio to your screen; redirect stdout
+or pass `--output` instead. Pressing Ctrl-C, or closing a pipe early (e.g.
+piping into `head`), stops playback and exits cleanly.
 
 The client commands use `http://127.0.0.1:45123` by default. Set
 `TTS_GATEWAY_URL` when the server uses a different address:
