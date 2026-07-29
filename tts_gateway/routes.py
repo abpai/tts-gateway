@@ -8,6 +8,7 @@ Infrastructure:      /health, /warmup
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
@@ -26,6 +27,7 @@ from tts_gateway.engines.base import AudioChunk, TtsEngine
 from tts_gateway.render import open_stream_audio, stream_pcm
 from tts_gateway.runtime import JobRuntime, NoEnginesError, run_worker_loop
 from tts_gateway.types import JobView, SynthesisSpec
+from tts_gateway.version import package_version
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +110,6 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
 
   @asynccontextmanager
   async def lifespan(app: FastAPI):
-    import asyncio
-
     worker = asyncio.create_task(
       run_worker_loop(runtime, poll_seconds=config.worker_poll_seconds)
     )
@@ -164,10 +164,15 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
   @app.get('/health')
   async def health() -> dict[str, Any]:
     return {
-      'ok': True,
+      # True when at least one engine in the configured chain is available.
+      # Checking runtime.engines only inspects construction/enablement — it
+      # never triggers a lazy engine's model load.
+      'ok': bool(runtime.engines),
+      'packageVersion': package_version(),
       'primaryEngine': config.primary_engine,
       'fallbackEngine': config.fallback_engine,
       'outputFormat': config.output_format,
+      'deviceMode': config.device_mode,
       'chunkConcurrency': runtime.concurrency,
       'chunkMaxChars': config.chunk_max_chars,
       'streamFirstChunkMaxChars': config.stream_first_chunk_max_chars,

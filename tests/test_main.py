@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import _make_config
 from tts_gateway.main import create_app
+from tts_gateway.speech_cli import HealthReport
+from tts_gateway.version import package_version
 
 
 def test_health_reports_chunk_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -16,6 +18,72 @@ def test_health_reports_chunk_concurrency(monkeypatch: pytest.MonkeyPatch) -> No
 
   assert response.status_code == 200
   assert response.json()['chunkConcurrency'] == 4
+  assert response.json()['packageVersion'] == package_version()
+  assert response.json()['deviceMode'] == 'cpu'
+  assert 'defaultSpeed' not in response.json()
+
+
+def test_health_ok_false_when_no_engines_available() -> None:
+  app = create_app(
+    _make_config(kokoro_enabled=False, pocket_enabled=False, cosyvoice_enabled=False)
+  )
+  client = TestClient(app)
+
+  response = client.get('/health')
+
+  assert response.status_code == 200
+  assert response.json()['ok'] is False
+
+
+def test_health_ok_true_when_an_engine_is_available() -> None:
+  app = create_app(_make_config(kokoro_enabled=True))
+  client = TestClient(app)
+
+  response = client.get('/health')
+
+  assert response.status_code == 200
+  assert response.json()['ok'] is True
+
+
+def test_health_matches_cli_contract() -> None:
+  """Locks the server/CLI contract: /health must validate as a HealthReport."""
+  app = create_app(_make_config(kokoro_enabled=True))
+  client = TestClient(app)
+
+  response = client.get('/health')
+
+  assert response.status_code == 200
+  HealthReport.model_validate(response.json())
+
+
+def test_tts_stream_accepts_cli_payload_shape() -> None:
+  """POST /tts/stream must accept the JSON body shape the CLI sends."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post(
+    '/tts/stream',
+    json={'text': 'hello world', 'voice': 'af_heart', 'speed': 1.0},
+  )
+
+  assert response.status_code != 422
+  if response.status_code >= 400:
+    assert 'error' in response.json()
+
+
+def test_v1_speech_accepts_cli_form_shape() -> None:
+  """POST /v1/speech must accept the urlencoded form shape the CLI sends."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post(
+    '/v1/speech',
+    data={'text': 'hello world', 'voice': 'af_heart', 'speed': '1.0'},
+  )
+
+  assert response.status_code != 422
+  if response.status_code >= 400:
+    assert 'error' in response.json()
 
 
 def test_main_shim_exports_create_app() -> None:

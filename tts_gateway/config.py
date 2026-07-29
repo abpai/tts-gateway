@@ -144,7 +144,7 @@ def load_config() -> GatewayConfig:
     models_dir=_optional('TTS_MODELS_DIR', os.path.expanduser(DEFAULT_MODELS_DIR)),
     default_voice=_parse_optional_str('TTS_DEFAULT_VOICE'),
     bind_host=_optional('TTS_GATEWAY_HOST', '127.0.0.1'),
-    bind_port=_parse_positive_int('TTS_GATEWAY_PORT', 8000),
+    bind_port=_parse_positive_int('TTS_GATEWAY_PORT', 45123),
     data_dir=_optional('TTS_DATA_DIR', os.path.expanduser(DEFAULT_DATA_DIR)),
     pipeline_version=_optional('TTS_PIPELINE_VERSION', '1'),
     worker_poll_seconds=float(_optional('TTS_WORKER_POLL_SECONDS', '1.0')),

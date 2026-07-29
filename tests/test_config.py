@@ -102,7 +102,7 @@ def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
   assert cfg.fallback_engine is None
   assert cfg.default_voice is None
   assert cfg.bind_host == '127.0.0.1'
-  assert cfg.bind_port == 8000
+  assert cfg.bind_port == 45123
   assert cfg.warmup_on_start is True
 
 

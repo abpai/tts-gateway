@@ -1,14 +1,26 @@
-"""CLI entry point for tts-gateway: `tts serve` and `tts worker`."""
+"""CLI entry point for tts-gateway."""
 
 from __future__ import annotations
 
 import argparse
 import logging
 import os
+import shutil
+import subprocess
 import sys
 import warnings
+from pathlib import Path
 
 from tts_gateway.config import DEFAULT_MODELS_DIR
+from tts_gateway.speech_cli import (
+  SpeakOptions,
+  SpeechCliError,
+  fetch_health,
+  format_config,
+  read_speak_text,
+  speak,
+)
+from tts_gateway.version import package_version
 
 _NOISY_LOGGERS = ('httpcore', 'httpx', 'urllib3', 'filelock')
 _QUIET_LOGGERS = ('huggingface_hub',)  # suppress HF token nag
@@ -105,21 +117,35 @@ def _set_common_env(args: argparse.Namespace) -> None:
     os.environ['TTS_CHUNK_MAX_CHARS'] = str(args.chunk_size)
 
 
-def main(argv: list[str] | None = None) -> None:
+def build_parser() -> argparse.ArgumentParser:
+  """Build the command-line parser."""
   parser = argparse.ArgumentParser(prog='tts', description='TTS Gateway server')
+  parser.add_argument(
+    '--version',
+    action='version',
+    version=f'%(prog)s {package_version()}',
+  )
   sub = parser.add_subparsers(dest='command')
+  _add_serve_parser(sub)
+  _add_worker_parser(sub)
+  _add_speak_parser(sub)
+  _add_status_parsers(sub)
+  sub.add_parser('update', help='Update the installed tts-gateway tool')
+  return parser
 
-  # --- serve ---
+
+def _add_serve_parser(sub: argparse._SubParsersAction) -> None:
   serve = sub.add_parser('serve', help='Start the TTS gateway server')
   _add_common_args(serve)
   serve.add_argument(
-    '--port', type=int, default=8000, help='Server port (default: 8000)'
+    '--port', type=int, default=45123, help='Server port (default: 45123)'
   )
   serve.add_argument(
     '--host', default='127.0.0.1', help='Bind host (default: 127.0.0.1)'
   )
 
-  # --- worker ---
+
+def _add_worker_parser(sub: argparse._SubParsersAction) -> None:
   worker = sub.add_parser('worker', help='Run the background job worker')
   _add_common_args(worker)
   worker.add_argument(
@@ -134,15 +160,143 @@ def main(argv: list[str] | None = None) -> None:
     help='Seconds between queue polls (default: 1.0)',
   )
 
+
+def _add_speak_parser(sub: argparse._SubParsersAction) -> None:
+  speak_parser = sub.add_parser('speak', help='Speak text through the gateway')
+  speak_parser.add_argument(
+    'text', nargs='*', help='Text to speak; reads stdin if omitted'
+  )
+  _add_gateway_args(speak_parser, timeout_label='Connection')
+  speak_parser.add_argument('--voice', help='Voice name')
+  speak_parser.add_argument('--speed', type=float, help='Speech speed')
+  speak_parser.add_argument('-o', '--output', type=Path, help='Write audio to a file')
+  _add_speak_behavior_args(speak_parser)
+
+
+def _add_speak_behavior_args(parser: argparse.ArgumentParser) -> None:
+  """Add playback and streaming options."""
+  parser.add_argument(
+    '--play',
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help=(
+      'Play audio while it arrives (default: enabled); without --output, '
+      'redirected stdout also receives the audio bytes'
+    ),
+  )
+  parser.add_argument(
+    '--stream',
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help='Use streaming synthesis (default: enabled)',
+  )
+  parser.add_argument(
+    '--ffplay-path',
+    default='ffplay',
+    help='ffplay executable (default: ffplay)',
+  )
+
+
+def _add_status_parsers(sub: argparse._SubParsersAction) -> None:
+  health = sub.add_parser('health', help='Check gateway health')
+  _add_gateway_args(health)
+  config = sub.add_parser('config', help='Show the active gateway configuration')
+  _add_gateway_args(config)
+
+
+def _add_gateway_args(
+  parser: argparse.ArgumentParser, *, timeout_label: str = 'Request'
+) -> None:
+  """Add gateway connection options."""
+  parser.add_argument(
+    '--base-url',
+    default=os.getenv('TTS_GATEWAY_URL', 'http://127.0.0.1:45123'),
+    help='Gateway URL (default: $TTS_GATEWAY_URL or http://127.0.0.1:45123)',
+  )
+  parser.add_argument(
+    '--timeout',
+    type=float,
+    default=5.0,
+    help=f'{timeout_label} timeout in seconds (default: 5)',
+  )
+
+
+def main(argv: list[str] | None = None) -> None:
+  parser = build_parser()
   args = parser.parse_args(argv)
 
-  if args.command == 'serve':
-    _run_serve(args)
-  elif args.command == 'worker':
-    _run_worker(args)
-  else:
-    parser.print_help()
-    sys.exit(1)
+  try:
+    if args.command == 'serve':
+      _run_serve(args)
+    elif args.command == 'worker':
+      _run_worker(args)
+    elif args.command == 'speak':
+      _run_speak(args)
+    elif args.command == 'health':
+      _run_health(args)
+    elif args.command == 'config':
+      _run_config(args)
+    elif args.command == 'update':
+      _run_update()
+    else:
+      parser.print_help()
+      parser.exit(1)
+  except SpeechCliError as exc:
+    parser.exit(1, f'error: {exc}\n')
+  except KeyboardInterrupt:
+    parser.exit(130)
+
+
+def _run_speak(args: argparse.Namespace) -> None:
+  text = read_speak_text(args.text, sys.stdin)
+  options = SpeakOptions(
+    text=text,
+    base_url=args.base_url,
+    voice=args.voice,
+    speed=args.speed,
+    output=args.output,
+    play=args.play,
+    stream=args.stream,
+    ffplay_path=args.ffplay_path,
+    connect_timeout=args.timeout,
+  )
+  speak(options, sys.stdout.buffer)
+
+
+def _run_health(args: argparse.Namespace) -> None:
+  report = fetch_health(args.base_url, args.timeout)
+  if not report.ok:
+    raise SpeechCliError('gateway reported an unhealthy status')
+  print(f'healthy  {args.base_url.rstrip("/")}')
+
+
+def _run_config(args: argparse.Namespace) -> None:
+  report = fetch_health(args.base_url, args.timeout)
+  print(format_config(report, args.base_url))
+
+
+def _run_update() -> None:
+  uv_path = shutil.which('uv')
+  if uv_path is None:
+    raise SpeechCliError('uv is required to update tts-gateway')
+  result = subprocess.run(
+    [
+      uv_path,
+      'tool',
+      'upgrade',
+      'tts-gateway',
+      '--reinstall-package',
+      'tts-gateway',
+    ],
+    check=False,
+  )
+  if result.returncode != 0:
+    raise SpeechCliError('uv could not update tts-gateway')
+  tts_path = shutil.which('tts')
+  if tts_path is not None:
+    # Report the freshly installed binary's version, not this process's
+    # (potentially now-stale) in-memory package_version().
+    subprocess.run([tts_path, '--version'], check=False)
 
 
 def _run_serve(args: argparse.Namespace) -> None:

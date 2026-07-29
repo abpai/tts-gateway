@@ -19,7 +19,7 @@ SPEC.loader.exec_module(check)
 
 
 def test_default_endpoints() -> None:
-  args = check.parse_args(['--base-url', 'http://127.0.0.1:8000'])
+  args = check.parse_args(['--base-url', 'http://127.0.0.1:45123'])
   assert check.default_endpoints(args) == ['/tts/stream', '/tts/stream/pcm']
 
 
