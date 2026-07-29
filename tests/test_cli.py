@@ -333,8 +333,8 @@ def test_pcm_ffplay_args_uses_response_headers() -> None:
     's16le',
     '-ar',
     '24000',
-    '-ac',
-    '1',
+    '-ch_layout',
+    'mono',
     '-fflags',
     'nobuffer',
   )
@@ -348,8 +348,8 @@ def test_pcm_ffplay_args_falls_back_to_defaults_when_headers_missing() -> None:
     's16le',
     '-ar',
     '24000',
-    '-ac',
-    '1',
+    '-ch_layout',
+    'mono',
     '-fflags',
     'nobuffer',
   )
@@ -618,7 +618,7 @@ def test_speak_pcm_play_only_requests_pcm_and_uses_pcm_ffplay_args(
   assert argv[0] == '/usr/bin/ffplay'
   assert argv[argv.index('-f') + 1] == 's16le'
   assert argv[argv.index('-ar') + 1] == '24000'
-  assert argv[argv.index('-ac') + 1] == '1'
+  assert argv[argv.index('-ch_layout') + 1] == 'mono'
   assert argv[argv.index('-fflags') + 1] == 'nobuffer'
   assert argv[-2:] == ['-i', 'pipe:0']
   assert b''.join(processes[0].stdin.chunks) == b'pcm-bytes'

@@ -290,11 +290,25 @@ def _encoded_ffplay_args(response: httpx.Response) -> tuple[str, ...]:
 
 
 def _pcm_ffplay_args(response: httpx.Response) -> tuple[str, ...]:
-  """Build ffplay's raw-PCM decode args from the response's X-TTS-* PCM headers."""
+  """Build ffplay's raw-PCM decode args from the response's X-TTS-* PCM headers.
+
+  ffplay has no -ac option (that is the ffmpeg CLI); the channel count must be
+  expressed as a -ch_layout name.
+  """
   pcm_format = response.headers.get('x-tts-pcm-format', _DEFAULT_PCM_FORMAT)
   sample_rate = response.headers.get('x-tts-sample-rate', _DEFAULT_SAMPLE_RATE)
   channels = response.headers.get('x-tts-channels', _DEFAULT_CHANNELS)
-  return ('-f', pcm_format, '-ar', sample_rate, '-ac', channels, '-fflags', 'nobuffer')
+  layout = {'1': 'mono', '2': 'stereo'}.get(channels, f'{channels}c')
+  return (
+    '-f',
+    pcm_format,
+    '-ar',
+    sample_rate,
+    '-ch_layout',
+    layout,
+    '-fflags',
+    'nobuffer',
+  )
 
 
 def _consume_audio(
