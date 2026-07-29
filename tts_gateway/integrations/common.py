@@ -19,6 +19,11 @@ from tts_gateway.speech_cli import SpeakOptions, SpeechCliError, speak
 SPEAK_BACK_MARKER = '{speak back}'
 
 
+def speak_marker() -> str:
+  """Return the active speak-back marker (override via TTS_SPEAK_MARKER)."""
+  return os.getenv('TTS_SPEAK_MARKER') or SPEAK_BACK_MARKER
+
+
 class IntegrationError(SpeechCliError):
   """Report an agent integration failure."""
 

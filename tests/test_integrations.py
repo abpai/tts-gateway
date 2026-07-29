@@ -365,3 +365,71 @@ def test_queue_speech_uses_private_file_and_detached_worker(tmp_path: Path) -> N
   assert speech_path.read_text() == 'The final answer.'
   assert speech_path.stat().st_mode & 0o777 == 0o600
   assert kwargs['start_new_session'] is True
+
+
+def test_claude_accepts_user_prompt_field_alias(tmp_path: Path) -> None:
+  """Claude Code docs have named the prompt field both 'prompt' and
+  'user_prompt' across versions; both must set the speak-back flag."""
+  settings, record, root = _claude_paths(tmp_path)
+  claude.install(settings, record, _TTS, root)
+  queued: list[str] = []
+
+  claude.handle_event(
+    _claude_payload('UserPromptSubmit', user_prompt='Explain it {speak back}'),
+    record,
+    root,
+  )
+  claude.handle_event(
+    _claude_payload('Stop', last_assistant_message='The final answer.'),
+    record,
+    root,
+    enqueue=lambda text, _executable, _root: queued.append(text),
+  )
+
+  assert queued == ['The final answer.']
+
+
+def test_marker_is_configurable_via_environment(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  monkeypatch.setenv('TTS_SPEAK_MARKER', '{speak}')
+  settings, record, root = _claude_paths(tmp_path)
+  claude.install(settings, record, _TTS, root)
+  queued: list[str] = []
+
+  claude.handle_event(
+    _claude_payload('UserPromptSubmit', prompt='Short marker {speak}'),
+    record,
+    root,
+  )
+  claude.handle_event(
+    _claude_payload('Stop', last_assistant_message='Spoken.'),
+    record,
+    root,
+    enqueue=lambda text, _executable, _root: queued.append(text),
+  )
+
+  assert queued == ['Spoken.']
+
+
+def test_default_marker_ignores_env_marker_prompts(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  monkeypatch.delenv('TTS_SPEAK_MARKER', raising=False)
+  settings, record, root = _claude_paths(tmp_path)
+  claude.install(settings, record, _TTS, root)
+  queued: list[str] = []
+
+  claude.handle_event(
+    _claude_payload('UserPromptSubmit', prompt='Not marked {speak}'),
+    record,
+    root,
+  )
+  claude.handle_event(
+    _claude_payload('Stop', last_assistant_message='Not spoken.'),
+    record,
+    root,
+    enqueue=lambda text, _executable, _root: queued.append(text),
+  )
+
+  assert queued == []

@@ -100,6 +100,9 @@ Add `{speak back}` to a prompt to play only that prompt's final response:
 Explain how the streaming endpoint works. {speak back}
 ```
 
+Set `TTS_SPEAK_MARKER` to use a different marker, for example
+`TTS_SPEAK_MARKER='{speak}'` for a shorter trigger.
+
 Both integrations use `UserPromptSubmit` plus `Stop` lifecycle hooks. Research
 updates, tool calls, and subagent responses are not spoken. The final response
 still appears in the agent chat.

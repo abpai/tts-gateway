@@ -8,10 +8,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from tts_gateway.integrations.common import (
-  SPEAK_BACK_MARKER,
   InstallRecord,
   IntegrationError,
   atomic_write_text,
@@ -20,6 +19,7 @@ from tts_gateway.integrations.common import (
   read_text,
   remove_config,
   remove_record,
+  speak_marker,
   text_hash,
   write_backup,
   write_record,
@@ -42,7 +42,9 @@ class LifecycleEvent(BaseModel):
 
   session_id: str
   hook_event_name: str
-  prompt: str = ''
+  # Claude Code docs have used both names for this field across versions;
+  # Codex uses 'prompt'. Accept either.
+  prompt: str = Field('', validation_alias=AliasChoices('prompt', 'user_prompt'))
   last_assistant_message: str | None = None
 
 
@@ -350,8 +352,8 @@ def _flag_path(root: Path, target: str, session_id: str) -> Path:
 
 
 def _set_prompt_flag(flag: Path, prompt: str) -> None:
-  value = SPEAK_BACK_MARKER if SPEAK_BACK_MARKER in prompt else ''
-  atomic_write_text(flag, value)
+  marker = speak_marker()
+  atomic_write_text(flag, marker if marker in prompt else '')
 
 
 def _claim_prompt_flag(flag: Path, target: str) -> bool:
@@ -362,7 +364,7 @@ def _claim_prompt_flag(flag: Path, target: str) -> bool:
     flag.unlink()
   except OSError as exc:
     raise IntegrationError(f'cannot read {target} prompt state: {exc}') from exc
-  return value == SPEAK_BACK_MARKER
+  return bool(value) and value == speak_marker()
 
 
 def _restore_original(path: Path, record: LifecycleInstallRecord) -> None:
