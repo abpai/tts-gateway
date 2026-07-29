@@ -83,6 +83,13 @@ published image from Compose rather than vendoring this repo's Python source.
 
 ## Usage
 
+Inspect or update the installed command:
+
+```bash
+tts --version
+tts update
+```
+
 Start the server:
 
 ```bash
@@ -91,32 +98,62 @@ tts serve --provider kokoro --port 9000 --device cpu --format mp3
 tts serve --provider kokoro --fallback pocket
 ```
 
+Check the active gateway:
+
+```bash
+tts health
+tts config
+```
+
+Speak text with streaming playback:
+
+```bash
+tts speak 'Hello world'
+cat /tmp/speak_it.txt | tts speak
+```
+
+Streaming and playback are enabled by default. Disable playback to write MP3
+audio to a file or standard output:
+
+```bash
+tts speak 'Hello world' --no-play --output speech.mp3
+cat /tmp/speak_it.txt | tts speak --no-play > speech.mp3
+tts speak 'Hello world' --no-stream
+```
+
+The client commands use `http://127.0.0.1:45123` by default. Set
+`TTS_GATEWAY_URL` when the server uses a different address:
+
+```bash
+export TTS_GATEWAY_URL=http://127.0.0.1:45123
+```
+
 Synthesize speech:
 
 ```bash
 # Canonical sync API
-curl -X POST http://localhost:8000/v1/speech -F 'text=Hello world' -o output.mp3
+curl -X POST http://localhost:45123/v1/speech -F 'text=Hello world' -o output.mp3
 
 # With a specific voice
-curl -X POST http://localhost:8000/v1/speech -F 'text=Hello world' -F 'voice=af_heart' -o output.mp3
+curl -X POST http://localhost:45123/v1/speech -F 'text=Hello world' -F 'voice=af_heart' -o output.mp3
 
 # With native speed control when the selected engine supports it
-curl -X POST http://localhost:8000/v1/speech -F 'text=Hello world' -F 'speed=1.25' -o output.mp3
+curl -X POST http://localhost:45123/v1/speech -F 'text=Hello world' -F 'speed=1.25' -o output.mp3
 
 # Legacy compatibility route
-curl -X POST http://localhost:8000/tts -F 'text=Hello world' -o output.mp3
+curl -X POST http://localhost:45123/tts -F 'text=Hello world' -o output.mp3
 
 # Async job submission
-curl -X POST http://localhost:8000/v1/jobs -F 'text=Hello world' | jq
+curl -X POST http://localhost:45123/v1/jobs -F 'text=Hello world' | jq
 
 # Chunk-level audio streaming (always returns MP3)
-curl -X POST http://localhost:8000/tts/stream \
+curl -X POST http://localhost:45123/tts/stream \
   -H 'Content-Type: application/json' \
   -d '{"text":"Hello world","speed":1.25}' \
   -o output.mp3
 
 # Raw PCM streaming (preferred for Raycast to avoid multi-chunk MP3 boundary risk)
-curl -X POST http://localhost:8000/tts/stream/pcm \
+curl -X POST http://localhost:45123/tts/stream/pcm \
   -H 'Content-Type: application/json' \
   -d '{"text":"Hello world"}' \
   -o output.pcm
@@ -128,13 +165,13 @@ first raw PCM chunk without stitching independent MP3 frames at chunk joins.
 Check server status:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:45123/health
 ```
 
 Pre-load models into memory:
 
 ```bash
-curl -X POST http://localhost:8000/warmup
+curl -X POST http://localhost:45123/warmup
 ```
 
 When both a primary and fallback engine are configured, the gateway tries the primary first and falls back on failure. Long texts are chunked automatically, synthesized concurrently across native chunks, and stitched into one final output file. The canonical API surface is `/v1/speech`, `/v1/jobs`, and `/v1/jobs/{key}/audio`; `/tts` and `/tts/sync` remain available as compatibility shims.
@@ -179,7 +216,7 @@ All settings can be controlled via environment variables. CLI flags take precede
 | `TTS_DEFAULT_VOICE`           | _(none)_                      | Default voice name                             |
 | `TTS_MODELS_DIR`              | `~/.cache/tts-gateway/models` | Model storage directory                        |
 | `TTS_GATEWAY_HOST`            | `127.0.0.1`                   | Bind address                                   |
-| `TTS_GATEWAY_PORT`            | `8000`                        | Bind port                                      |
+| `TTS_GATEWAY_PORT`            | `45123`                       | Bind port                                      |
 | `TTS_CHUNK_MAX_CHARS`         | `500`                         | Max characters per chunk                       |
 | `TTS_STREAM_FIRST_CHUNK_MAX_CHARS` | `180`                  | Max characters in the first stream chunk (time-to-first-audio) |
 | `TTS_STREAM_CHUNK_MAX_CHARS`  | _(same as chunk max)_         | Max characters per subsequent stream chunk     |
@@ -227,9 +264,9 @@ After that, you can verify the local server the same way as the container:
 
 ```bash
 make run
-curl http://127.0.0.1:8000/health
-curl -X POST http://127.0.0.1:8000/warmup
-curl -X POST http://127.0.0.1:8000/v1/speech -F 'text=Hello world' -o output.mp3
+curl http://127.0.0.1:45123/health
+curl -X POST http://127.0.0.1:45123/warmup
+curl -X POST http://127.0.0.1:45123/v1/speech -F 'text=Hello world' -o output.mp3
 ```
 
 ## Releasing

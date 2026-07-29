@@ -29,7 +29,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 OUTPUT_DIR = Path('/tmp/tts-test')
-BASE_URL = 'http://localhost:8000'
+BASE_URL = 'http://localhost:45123'
 
 
 def _request(

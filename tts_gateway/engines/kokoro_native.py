@@ -91,6 +91,11 @@ class KokoroNativeEngine(LazyNativeEngine):
   def install_hint(self) -> str | None:
     return 'uv sync --group dev --extra kokoro'
 
+  def health_status(self) -> dict:
+    status = super().health_status()
+    status['model'] = KOKORO_REPO_ID
+    return status
+
   # ------------------------------------------------------------------
   # LazyNativeEngine contract
   # ------------------------------------------------------------------

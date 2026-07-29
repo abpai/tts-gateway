@@ -16,6 +16,9 @@ def test_health_reports_chunk_concurrency(monkeypatch: pytest.MonkeyPatch) -> No
 
   assert response.status_code == 200
   assert response.json()['chunkConcurrency'] == 4
+  assert response.json()['packageVersion'] == '1.2.0'
+  assert response.json()['deviceMode'] == 'cpu'
+  assert response.json()['defaultSpeed'] == 1.0
 
 
 def test_main_shim_exports_create_app() -> None:

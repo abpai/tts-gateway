@@ -25,7 +25,7 @@ transport = listening.transport
 
 
 def test_default_endpoints() -> None:
-  args = listening.parse_args(['--base-url', 'http://127.0.0.1:8000'])
+  args = listening.parse_args(['--base-url', 'http://127.0.0.1:45123'])
   assert transport.default_endpoints(args) == ['/tts/stream', '/tts/stream/pcm']
 
 

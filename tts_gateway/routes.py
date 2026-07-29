@@ -8,6 +8,8 @@ Infrastructure:      /health, /warmup
 
 from __future__ import annotations
 
+import asyncio
+import importlib.metadata
 import logging
 import math
 import time
@@ -108,8 +110,6 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
 
   @asynccontextmanager
   async def lifespan(app: FastAPI):
-    import asyncio
-
     worker = asyncio.create_task(
       run_worker_loop(runtime, poll_seconds=config.worker_poll_seconds)
     )
@@ -165,9 +165,12 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
   async def health() -> dict[str, Any]:
     return {
       'ok': True,
+      'packageVersion': importlib.metadata.version('tts-gateway'),
       'primaryEngine': config.primary_engine,
       'fallbackEngine': config.fallback_engine,
       'outputFormat': config.output_format,
+      'deviceMode': config.device_mode,
+      'defaultSpeed': 1.0,
       'chunkConcurrency': runtime.concurrency,
       'chunkMaxChars': config.chunk_max_chars,
       'streamFirstChunkMaxChars': config.stream_first_chunk_max_chars,
