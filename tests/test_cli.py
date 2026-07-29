@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import urllib.parse
 from contextlib import ExitStack
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -18,11 +17,13 @@ from tts_gateway.speech_cli import (
   SpeakOptions,
   SpeechCliError,
   _consume_audio,
-  _finish_player,
   _open_output,
-  _open_player,
+  _pcm_ffplay_args,
+  _Player,
   _raise_response_error,
+  _resolve_ffplay,
   _speech_response,
+  _wants_pcm,
   _warn_format_mismatch,
   fetch_health,
   format_config,
@@ -42,12 +43,24 @@ class _FakeStdout(BytesIO):
     return self._tty
 
 
-class _FakePlayer:
-  """A minimal stand-in for subprocess.Popen[bytes] for _finish_player tests."""
+class _TrackingOutput(BytesIO):
+  """A BytesIO that counts flush() calls, for tee vs. file sink assertions."""
 
-  def __init__(self, return_code: int, stdin: Any | None = None) -> None:
+  def __init__(self) -> None:
+    super().__init__()
+    self.flush_calls = 0
+
+  def flush(self) -> None:
+    self.flush_calls += 1
+    super().flush()
+
+
+class _FakeProcess:
+  """A minimal stand-in for subprocess.Popen[bytes], for _Player tests."""
+
+  def __init__(self, return_code: int = 0, stdin: Any | None = None) -> None:
     self.returncode = return_code
-    self.stdin = stdin
+    self.stdin = stdin if stdin is not None else BytesIO()
     self._return_code = return_code
 
   def wait(self) -> int:
@@ -55,7 +68,7 @@ class _FakePlayer:
 
 
 class _BrokenStdin:
-  """A file-like object whose writes always raise BrokenPipeError."""
+  """A file-like object whose writes and close always raise BrokenPipeError."""
 
   def write(self, data: bytes) -> int:
     raise BrokenPipeError
@@ -64,7 +77,66 @@ class _BrokenStdin:
     pass
 
   def close(self) -> None:
+    raise BrokenPipeError
+
+
+class _RecordedStdin:
+  """A stdin stand-in that keeps written bytes readable even after close()."""
+
+  def __init__(self) -> None:
+    self.chunks: list[bytes] = []
+
+  def write(self, data: bytes) -> int:
+    self.chunks.append(data)
+    return len(data)
+
+  def flush(self) -> None:
     pass
+
+  def close(self) -> None:
+    pass
+
+
+class _RecordedPopen:
+  """Fake ffplay process that records its argv, for spawn-time assertions."""
+
+  def __init__(self, argv: list[str]) -> None:
+    self.argv = argv
+    self.stdin = _RecordedStdin()
+    self.returncode = 0
+
+  def wait(self) -> int:
+    return self.returncode
+
+
+def _patch_popen(monkeypatch: pytest.MonkeyPatch) -> list[_RecordedPopen]:
+  """Replace subprocess.Popen with a recorder; returns the list of spawned processes."""
+  processes: list[_RecordedPopen] = []
+
+  def fake_popen(argv: list[str], *, stdin: int) -> _RecordedPopen:
+    process = _RecordedPopen(argv)
+    processes.append(process)
+    return process
+
+  monkeypatch.setattr(speech_cli_module.subprocess, 'Popen', fake_popen)
+  return processes
+
+
+def _patch_which_finds_everything(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setattr(
+    speech_cli_module.shutil, 'which', lambda name: f'/usr/bin/{name}'
+  )
+
+
+def _patch_client(
+  monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport
+) -> None:
+  real_client = httpx.Client
+
+  def client_factory(*, timeout: httpx.Timeout) -> httpx.Client:
+    return real_client(timeout=timeout, transport=transport)
+
+  monkeypatch.setattr(speech_cli_module.httpx, 'Client', client_factory)
 
 
 def _health_report(**overrides: object) -> HealthReport:
@@ -135,9 +207,9 @@ def test_read_speak_text_raises_when_stdin_is_none_and_no_args() -> None:
     read_speak_text([], None)
 
 
-def test_stream_request_sends_json() -> None:
+def test_stream_request_sends_json_to_v1_speech_stream() -> None:
   def respond(request: httpx.Request) -> httpx.Response:
-    assert request.url.path == '/tts/stream'
+    assert request.url.path == '/v1/speech/stream'
     assert json.loads(request.content) == {
       'text': 'hello',
       'voice': 'af_heart',
@@ -152,12 +224,39 @@ def test_stream_request_sends_json() -> None:
       assert response.read() == b'audio'
 
 
-def test_form_request_sends_urlencoded_body() -> None:
+def test_stream_request_includes_format_when_requested() -> None:
+  def respond(request: httpx.Request) -> httpx.Response:
+    assert json.loads(request.content)['format'] == 'pcm'
+    return httpx.Response(200, content=b'audio')
+
+  transport = httpx.MockTransport(respond)
+  options = SpeakOptions('hello', 'http://gateway')
+  with httpx.Client(transport=transport) as client:
+    with _speech_response(client, options, request_format='pcm') as response:
+      response.read()
+
+
+def test_stream_request_omits_format_by_default() -> None:
+  def respond(request: httpx.Request) -> httpx.Response:
+    assert 'format' not in json.loads(request.content)
+    return httpx.Response(200, content=b'audio')
+
+  transport = httpx.MockTransport(respond)
+  options = SpeakOptions('hello', 'http://gateway')
+  with httpx.Client(transport=transport) as client:
+    with _speech_response(client, options) as response:
+      response.read()
+
+
+def test_nonstream_request_sends_json_to_v1_speech() -> None:
   def respond(request: httpx.Request) -> httpx.Response:
     assert request.url.path == '/v1/speech'
-    assert request.headers['content-type'] == 'application/x-www-form-urlencoded'
-    body = urllib.parse.parse_qs(request.content.decode())
-    assert body == {'text': ['hello'], 'voice': ['af_heart'], 'speed': ['1.25']}
+    assert request.headers['content-type'] == 'application/json'
+    assert json.loads(request.content) == {
+      'text': 'hello',
+      'voice': 'af_heart',
+      'speed': 1.25,
+    }
     return httpx.Response(200, content=b'audio')
 
   transport = httpx.MockTransport(respond)
@@ -202,11 +301,64 @@ def test_warn_format_mismatch_silent_when_streaming(
   assert capsys.readouterr().err == ''
 
 
+def test_wants_pcm_true_only_for_play_only_tty_stream_mode() -> None:
+  base = SpeakOptions('hello', 'http://gateway')
+
+  assert _wants_pcm(base, _FakeStdout(tty=True)) is True
+  assert _wants_pcm(base, _FakeStdout(tty=False)) is False
+
+  no_stream = SpeakOptions('hello', 'http://gateway', stream=False)
+  assert _wants_pcm(no_stream, _FakeStdout(tty=True)) is False
+
+  no_play = SpeakOptions('hello', 'http://gateway', play=False)
+  assert _wants_pcm(no_play, _FakeStdout(tty=True)) is False
+
+  with_output = SpeakOptions('hello', 'http://gateway', output=Path('out.mp3'))
+  assert _wants_pcm(with_output, _FakeStdout(tty=True)) is False
+
+
+def test_pcm_ffplay_args_uses_response_headers() -> None:
+  response = httpx.Response(
+    200,
+    headers={
+      'x-tts-pcm-format': 's16le',
+      'x-tts-sample-rate': '24000',
+      'x-tts-channels': '1',
+    },
+  )
+
+  assert _pcm_ffplay_args(response) == (
+    '-f',
+    's16le',
+    '-ar',
+    '24000',
+    '-ac',
+    '1',
+    '-fflags',
+    'nobuffer',
+  )
+
+
+def test_pcm_ffplay_args_falls_back_to_defaults_when_headers_missing() -> None:
+  response = httpx.Response(200)
+
+  assert _pcm_ffplay_args(response) == (
+    '-f',
+    's16le',
+    '-ar',
+    '24000',
+    '-ac',
+    '1',
+    '-fflags',
+    'nobuffer',
+  )
+
+
 def test_no_play_writes_audio_to_stdout() -> None:
   response = httpx.Response(200, content=b'audio')
   stdout = BytesIO()
 
-  completed = _consume_audio(response, stdout, None)
+  completed = _consume_audio(response, stdout, None, flush_output=False)
 
   assert completed is True
   assert stdout.getvalue() == b'audio'
@@ -217,19 +369,38 @@ def test_output_file_receives_audio(tmp_path: Path) -> None:
   response = httpx.Response(200, content=b'audio')
 
   with output_path.open('wb') as output:
-    completed = _consume_audio(response, output, None)
+    completed = _consume_audio(response, output, None, flush_output=False)
 
   assert completed is True
   assert output_path.read_bytes() == b'audio'
 
 
+def test_consume_audio_flushes_stdout_tee_sink_per_chunk() -> None:
+  response = httpx.Response(200, content=b'audio')
+  output = _TrackingOutput()
+
+  completed = _consume_audio(response, output, None, flush_output=True)
+
+  assert completed is True
+  assert output.flush_calls >= 1
+
+
+def test_consume_audio_does_not_flush_file_sink() -> None:
+  response = httpx.Response(200, content=b'audio')
+  output = _TrackingOutput()
+
+  completed = _consume_audio(response, output, None, flush_output=False)
+
+  assert completed is True
+  assert output.flush_calls == 0
+
+
 def test_consume_audio_stops_cleanly_on_broken_player_pipe() -> None:
   response = httpx.Response(200, content=b'audio')
-  player = _FakePlayer(0, stdin=_BrokenStdin())
+  process = cast('subprocess.Popen[bytes]', _FakeProcess(stdin=_BrokenStdin()))
+  player = _Player(process)
 
-  completed = _consume_audio(
-    response, BytesIO(), cast('subprocess.Popen[bytes]', player)
-  )
+  completed = _consume_audio(response, BytesIO(), player, flush_output=False)
 
   assert completed is False
 
@@ -241,34 +412,37 @@ def test_consume_audio_stops_cleanly_on_broken_output_pipe() -> None:
 
   response = httpx.Response(200, content=b'audio')
 
-  completed = _consume_audio(response, cast(BinaryIO, _BrokenOutput()), None)
+  completed = _consume_audio(
+    response, cast(BinaryIO, _BrokenOutput()), None, flush_output=False
+  )
 
   assert completed is False
 
 
-def test_finish_player_raises_on_nonzero_when_body_completed() -> None:
-  player = cast('subprocess.Popen[bytes]', _FakePlayer(2))
+def test_player_finish_raises_on_nonzero_when_body_completed() -> None:
+  player = _Player(cast('subprocess.Popen[bytes]', _FakeProcess(2)))
 
   with pytest.raises(SpeechCliError, match='ffplay exited with status 2'):
-    _finish_player(player, body_completed=True)
+    player.finish(body_completed=True)
 
 
-def test_finish_player_ignores_nonzero_when_body_incomplete() -> None:
-  player = cast('subprocess.Popen[bytes]', _FakePlayer(2))
+def test_player_finish_ignores_nonzero_when_body_incomplete() -> None:
+  player = _Player(cast('subprocess.Popen[bytes]', _FakeProcess(2)))
 
-  _finish_player(player, body_completed=False)
-
-
-def test_finish_player_ignores_negative_return_code_even_if_completed() -> None:
-  player = cast('subprocess.Popen[bytes]', _FakePlayer(-2))
-
-  _finish_player(player, body_completed=True)
+  player.finish(body_completed=False)
 
 
-def test_finish_player_ignores_broken_pipe_on_close() -> None:
-  player = cast('subprocess.Popen[bytes]', _FakePlayer(0, stdin=_BrokenStdin()))
+def test_player_finish_ignores_negative_return_code_even_if_completed() -> None:
+  player = _Player(cast('subprocess.Popen[bytes]', _FakeProcess(-2)))
 
-  _finish_player(player, body_completed=True)
+  player.finish(body_completed=True)
+
+
+def test_player_finish_ignores_broken_pipe_on_close() -> None:
+  process = cast('subprocess.Popen[bytes]', _FakeProcess(0, stdin=_BrokenStdin()))
+  player = _Player(process)
+
+  player.finish(body_completed=True)
 
 
 def test_open_output_writes_to_given_file(tmp_path: Path) -> None:
@@ -331,27 +505,28 @@ def test_open_output_no_play_non_tty_writes_stdout() -> None:
   assert output is stdout
 
 
-def test_open_player_missing_ffplay(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_ffplay_missing(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(speech_cli_module.shutil, 'which', lambda _name: None)
-  options = SpeakOptions('hello', 'http://gateway', ffplay_path='nonexistent-ffplay')
 
   with pytest.raises(SpeechCliError, match='ffplay executable not found'):
-    _open_player(options)
+    _resolve_ffplay('nonexistent-ffplay')
+
+
+def test_resolve_ffplay_returns_resolved_path(monkeypatch: pytest.MonkeyPatch) -> None:
+  _patch_which_finds_everything(monkeypatch)
+
+  assert _resolve_ffplay('ffplay') == '/usr/bin/ffplay'
 
 
 def test_speak_writes_to_file_end_to_end(
   monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
   def respond(request: httpx.Request) -> httpx.Response:
+    assert request.url.path == '/v1/speech/stream'
     return httpx.Response(200, content=b'audio-bytes')
 
   transport = httpx.MockTransport(respond)
-  real_client = httpx.Client
-
-  def client_factory(*, timeout: httpx.Timeout) -> httpx.Client:
-    return real_client(timeout=timeout, transport=transport)
-
-  monkeypatch.setattr(speech_cli_module.httpx, 'Client', client_factory)
+  _patch_client(monkeypatch, transport)
   output_path = tmp_path / 'out.mp3'
   options = SpeakOptions('hello', 'http://gateway', output=output_path, play=False)
 
@@ -365,16 +540,125 @@ def test_speak_wraps_transport_error(monkeypatch: pytest.MonkeyPatch) -> None:
     raise httpx.ConnectError('connection refused', request=request)
 
   transport = httpx.MockTransport(respond)
-  real_client = httpx.Client
-
-  def client_factory(*, timeout: httpx.Timeout) -> httpx.Client:
-    return real_client(timeout=timeout, transport=transport)
-
-  monkeypatch.setattr(speech_cli_module.httpx, 'Client', client_factory)
+  _patch_client(monkeypatch, transport)
   options = SpeakOptions('hello', 'http://gateway', play=False)
 
   with pytest.raises(SpeechCliError, match='gateway request failed'):
     speak(options, BytesIO())
+
+
+def test_speak_pcm_play_only_requests_pcm_and_uses_pcm_ffplay_args(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  def respond(request: httpx.Request) -> httpx.Response:
+    assert json.loads(request.content)['format'] == 'pcm'
+    return httpx.Response(
+      200,
+      content=b'pcm-bytes',
+      headers={
+        'x-tts-pcm-format': 's16le',
+        'x-tts-sample-rate': '24000',
+        'x-tts-channels': '1',
+      },
+    )
+
+  transport = httpx.MockTransport(respond)
+  _patch_client(monkeypatch, transport)
+  _patch_which_finds_everything(monkeypatch)
+  processes = _patch_popen(monkeypatch)
+
+  options = SpeakOptions('hello', 'http://gateway')  # play + stream default, no output
+  speak(options, _FakeStdout(tty=True))
+
+  assert len(processes) == 1
+  argv = processes[0].argv
+  assert argv[0] == '/usr/bin/ffplay'
+  assert argv[argv.index('-f') + 1] == 's16le'
+  assert argv[argv.index('-ar') + 1] == '24000'
+  assert argv[argv.index('-ac') + 1] == '1'
+  assert argv[argv.index('-fflags') + 1] == 'nobuffer'
+  assert argv[-2:] == ['-i', 'pipe:0']
+  assert b''.join(processes[0].stdin.chunks) == b'pcm-bytes'
+
+
+def test_speak_file_output_requests_mp3_and_uses_mp3_ffplay_args(
+  monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+  def respond(request: httpx.Request) -> httpx.Response:
+    assert 'format' not in json.loads(request.content)
+    return httpx.Response(200, content=b'audio')
+
+  transport = httpx.MockTransport(respond)
+  _patch_client(monkeypatch, transport)
+  _patch_which_finds_everything(monkeypatch)
+  processes = _patch_popen(monkeypatch)
+
+  output_path = tmp_path / 'out.mp3'
+  options = SpeakOptions('hello', 'http://gateway', output=output_path)
+  speak(options, _FakeStdout(tty=True))
+
+  assert len(processes) == 1
+  argv = processes[0].argv
+  assert argv[argv.index('-f') + 1] == 'mp3'
+  assert argv[argv.index('-fflags') + 1] == 'nobuffer'
+  assert argv[-2:] == ['-i', 'pipe:0']
+  assert output_path.read_bytes() == b'audio'
+
+
+def test_speak_tee_mode_requests_mp3_and_tees_stdout(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  def respond(request: httpx.Request) -> httpx.Response:
+    assert 'format' not in json.loads(request.content)
+    return httpx.Response(200, content=b'audio')
+
+  transport = httpx.MockTransport(respond)
+  _patch_client(monkeypatch, transport)
+  _patch_which_finds_everything(monkeypatch)
+  processes = _patch_popen(monkeypatch)
+
+  stdout = _FakeStdout(tty=False)
+  options = SpeakOptions('hello', 'http://gateway')
+  speak(options, stdout)
+
+  assert len(processes) == 1
+  assert processes[0].argv[processes[0].argv.index('-f') + 1] == 'mp3'
+  assert stdout.getvalue() == b'audio'
+
+
+def test_speak_no_play_omits_format_and_spawns_no_player(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  def respond(request: httpx.Request) -> httpx.Response:
+    assert 'format' not in json.loads(request.content)
+    return httpx.Response(200, content=b'audio')
+
+  transport = httpx.MockTransport(respond)
+  _patch_client(monkeypatch, transport)
+  processes = _patch_popen(monkeypatch)
+
+  stdout = BytesIO()
+  options = SpeakOptions('hello', 'http://gateway', play=False)
+  speak(options, stdout)
+
+  assert processes == []
+  assert stdout.getvalue() == b'audio'
+
+
+def test_speak_gateway_error_spawns_no_player(monkeypatch: pytest.MonkeyPatch) -> None:
+  def respond(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(500, content=b'engine crashed')
+
+  transport = httpx.MockTransport(respond)
+  _patch_client(monkeypatch, transport)
+  _patch_which_finds_everything(monkeypatch)
+  processes = _patch_popen(monkeypatch)
+
+  options = SpeakOptions('hello', 'http://gateway')
+  with pytest.raises(SpeechCliError, match='engine crashed'):
+    speak(options, _FakeStdout(tty=True))
+
+  assert processes == []
 
 
 def test_config_formats_active_defaults() -> None:

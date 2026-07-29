@@ -1,9 +1,8 @@
 """FastAPI routes for the TTS gateway.
 
-Canonical API:       /v1/jobs, /v1/jobs/{key}, /v1/jobs/{key}/audio, /v1/speech
-Streaming:           /tts/stream, /tts/stream/pcm
-Legacy shims:        /tts, /tts/sync, /tts/{key}, /tts/{key}/audio
-Infrastructure:      /health, /warmup
+Canonical API:  /v1/speech, /v1/speech/stream, /v1/jobs, /v1/jobs/{key}, /v1/jobs/{key}/audio
+Legacy shims:   /tts, /tts/sync, /tts/{key}, /tts/{key}/audio, /tts/stream, /tts/stream/pcm
+Infrastructure: /health, /warmup
 """
 
 from __future__ import annotations
@@ -52,6 +51,8 @@ StreamOpener = Callable[
   Awaitable[StreamResponseParts],
 ]
 
+SpeechFields = tuple[str, str | None, float | None]
+
 
 async def abort_on_client_disconnect(
   request: Request,
@@ -91,6 +92,12 @@ def _speed_header(speed_applied: float | None) -> dict[str, str]:
   if speed_applied is None:
     return {}
   return {'X-TTS-Speed-Applied': str(speed_applied)}
+
+
+def _with_deprecation(response: Response) -> Response:
+  """Mark a legacy shim response as deprecated."""
+  response.headers['Deprecation'] = 'true'
+  return response
 
 
 async def _warmup_runtime(runtime: JobRuntime) -> None:
@@ -194,11 +201,10 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
   # Canonical API: /v1/speech (sync)
   # -----------------------------------------------------------------------
 
-  @app.post('/v1/speech')
-  async def v1_speech(
-    text: Annotated[str, Form(...)],
-    voice: Annotated[str | None, Form()] = None,
-    speed: Annotated[float | None, Form()] = None,
+  async def _speech_response(
+    text: str,
+    voice: str | None,
+    speed: float | None,
   ) -> Response:
     normalized = text.strip()
     if not normalized:
@@ -241,6 +247,75 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       )
     except FileNotFoundError:
       return JSONResponse(status_code=404, content={'error': 'artifact file missing'})
+
+  async def _parse_speech_json(request: Request) -> SpeechFields | JSONResponse:
+    try:
+      payload = await request.json()
+    except Exception:
+      return JSONResponse(
+        status_code=422, content={'error': 'request body is not valid JSON'}
+      )
+    if not isinstance(payload, dict):
+      return JSONResponse(
+        status_code=422, content={'error': 'JSON body must be an object'}
+      )
+
+    text = payload.get('text')
+    if not isinstance(text, str):
+      return JSONResponse(
+        status_code=422, content={'error': 'Field "text" must not be empty'}
+      )
+
+    voice = payload.get('voice')
+    if voice is not None and not isinstance(voice, str):
+      return JSONResponse(
+        status_code=422, content={'error': 'Field "voice" must be a string'}
+      )
+
+    speed_raw = payload.get('speed')
+    if speed_raw is not None and not isinstance(speed_raw, int | float):
+      return JSONResponse(
+        status_code=422, content={'error': 'Field "speed" must be a number'}
+      )
+    speed = float(speed_raw) if speed_raw is not None else None
+
+    return text, voice, speed
+
+  async def _parse_speech_form(request: Request) -> SpeechFields | JSONResponse:
+    form = await request.form()
+
+    text = form.get('text')
+    if not isinstance(text, str):
+      return JSONResponse(
+        status_code=422, content={'error': 'Field "text" must not be empty'}
+      )
+
+    voice_field = form.get('voice')
+    voice = voice_field if isinstance(voice_field, str) else None
+
+    speed_field = form.get('speed')
+    speed: float | None = None
+    if isinstance(speed_field, str) and speed_field:
+      try:
+        speed = float(speed_field)
+      except ValueError:
+        return JSONResponse(
+          status_code=422, content={'error': 'Field "speed" must be a number'}
+        )
+
+    return text, voice, speed
+
+  @app.post('/v1/speech')
+  async def v1_speech(request: Request) -> Response:
+    content_type = request.headers.get('content-type', '')
+    if content_type.startswith('application/json'):
+      parsed = await _parse_speech_json(request)
+    else:
+      parsed = await _parse_speech_form(request)
+    if isinstance(parsed, JSONResponse):
+      return parsed
+    text, voice, speed = parsed
+    return await _speech_response(text, voice, speed)
 
   # -----------------------------------------------------------------------
   # Canonical API: /v1/jobs (async)
@@ -459,6 +534,30 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       headers=parts.headers,
     )
 
+  @app.post('/v1/speech/stream')
+  async def v1_speech_stream(
+    request: Request,
+    text: Annotated[str, Body()],
+    voice: Annotated[str | None, Body()] = None,
+    speed: Annotated[float | None, Body()] = None,
+    speech_format: Annotated[str, Body(alias='format')] = 'mp3',
+  ) -> Response:
+    if speech_format not in ('mp3', 'pcm'):
+      return JSONResponse(
+        status_code=422,
+        content={
+          'error': f'Field "format" must be "mp3" or "pcm", got {speech_format!r}'
+        },
+      )
+    open_stream = _open_mp3_stream if speech_format == 'mp3' else _open_pcm_stream
+    return await _stream_tts_response(
+      request,
+      text,
+      voice,
+      speed,
+      open_stream=open_stream,
+    )
+
   @app.post('/tts/stream')
   async def tts_stream(
     request: Request,
@@ -466,13 +565,11 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     voice: Annotated[str | None, Body()] = None,
     speed: Annotated[float | None, Body()] = None,
   ) -> Response:
-    return await _stream_tts_response(
-      request,
-      text,
-      voice,
-      speed,
-      open_stream=_open_mp3_stream,
+    logger.info('legacy-route: POST /tts/stream → /v1/speech/stream')
+    response = await v1_speech_stream(
+      request, text=text, voice=voice, speed=speed, speech_format='mp3'
     )
+    return _with_deprecation(response)
 
   @app.post('/tts/stream/pcm')
   async def tts_stream_pcm(
@@ -481,13 +578,11 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     voice: Annotated[str | None, Body()] = None,
     speed: Annotated[float | None, Body()] = None,
   ) -> Response:
-    return await _stream_tts_response(
-      request,
-      text,
-      voice,
-      speed,
-      open_stream=_open_pcm_stream,
+    logger.info('legacy-route: POST /tts/stream/pcm → /v1/speech/stream')
+    response = await v1_speech_stream(
+      request, text=text, voice=voice, speed=speed, speech_format='pcm'
     )
+    return _with_deprecation(response)
 
   # -----------------------------------------------------------------------
   # Legacy shims (forward to canonical routes)
@@ -500,7 +595,8 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     speed: Annotated[float | None, Form()] = None,
   ) -> Response:
     logger.info('legacy-route: POST /tts/sync → /v1/speech')
-    return await v1_speech(text=text, voice=voice, speed=speed)
+    response = await _speech_response(text, voice, speed)
+    return _with_deprecation(response)
 
   @app.post('/tts')
   async def legacy_tts(
@@ -512,14 +608,17 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
     accept = request.headers.get('accept', '')
     if accept == 'application/json':
       logger.info('legacy-route: POST /tts (json) → /v1/jobs')
-      return await v1_jobs_submit(text=text, voice=voice)
+      response = await v1_jobs_submit(text=text, voice=voice)
+      return _with_deprecation(response)
     logger.info('legacy-route: POST /tts → /v1/speech')
-    return await v1_speech(text=text, voice=voice, speed=speed)
+    response = await _speech_response(text, voice, speed)
+    return _with_deprecation(response)
 
   @app.get('/tts/{job_key}')
   async def legacy_tts_status(job_key: str) -> Response:
     logger.info('legacy-route: GET /tts/%s → /v1/jobs/%s', job_key[:16], job_key[:16])
-    return await v1_jobs_status(job_key=job_key)
+    response = await v1_jobs_status(job_key=job_key)
+    return _with_deprecation(response)
 
   @app.get('/tts/{job_key}/audio')
   async def legacy_tts_audio(job_key: str) -> Response:
@@ -528,6 +627,7 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
       job_key[:16],
       job_key[:16],
     )
-    return await v1_jobs_audio(job_key=job_key)
+    response = await v1_jobs_audio(job_key=job_key)
+    return _with_deprecation(response)
 
   return app

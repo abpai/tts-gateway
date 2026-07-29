@@ -92,3 +92,110 @@ def test_main_shim_exports_create_app() -> None:
 
   assert hasattr(main, 'create_app')
   assert callable(main.create_app)
+
+
+def test_v1_speech_stream_accepts_json_body() -> None:
+  """POST /v1/speech/stream must accept {text, voice, speed} JSON."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post(
+    '/v1/speech/stream',
+    json={'text': 'hello world', 'voice': 'af_heart', 'speed': 1.0},
+  )
+
+  assert response.status_code != 422
+  if response.status_code >= 400:
+    assert 'error' in response.json()
+
+
+def test_v1_speech_stream_accepts_pcm_format() -> None:
+  """POST /v1/speech/stream with format='pcm' must not be rejected as invalid."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post(
+    '/v1/speech/stream',
+    json={'text': 'hello world', 'format': 'pcm'},
+  )
+
+  assert response.status_code != 422
+  if response.status_code >= 400:
+    assert 'error' in response.json()
+
+
+def test_v1_speech_stream_rejects_unknown_format() -> None:
+  """POST /v1/speech/stream with an unsupported format must 422."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post(
+    '/v1/speech/stream',
+    json={'text': 'hello world', 'format': 'ogg'},
+  )
+
+  assert response.status_code == 422
+  assert 'error' in response.json()
+
+
+def test_v1_speech_accepts_json_body() -> None:
+  """POST /v1/speech must accept {text, voice, speed} JSON as well as form data."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post(
+    '/v1/speech',
+    json={'text': 'hello world', 'voice': 'af_heart', 'speed': 1.0},
+  )
+
+  assert response.status_code != 422
+  if response.status_code >= 400:
+    assert 'error' in response.json()
+
+
+def test_tts_stream_carries_deprecation_header() -> None:
+  """Legacy POST /tts/stream must carry a Deprecation header."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post(
+    '/tts/stream',
+    json={'text': 'hello world', 'voice': 'af_heart', 'speed': 1.0},
+  )
+
+  assert response.status_code != 422
+  assert response.headers.get('Deprecation') == 'true'
+
+
+def test_tts_stream_pcm_carries_deprecation_header() -> None:
+  """Legacy POST /tts/stream/pcm must carry a Deprecation header."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post(
+    '/tts/stream/pcm',
+    json={'text': 'hello world', 'voice': 'af_heart', 'speed': 1.0},
+  )
+
+  assert response.status_code != 422
+  assert response.headers.get('Deprecation') == 'true'
+
+
+def test_legacy_tts_carries_deprecation_header() -> None:
+  """Legacy POST /tts must carry a Deprecation header."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post('/tts', data={'text': 'hello world'})
+
+  assert response.headers.get('Deprecation') == 'true'
+
+
+def test_legacy_tts_sync_carries_deprecation_header() -> None:
+  """Legacy POST /tts/sync must carry a Deprecation header."""
+  app = create_app(_make_config(kokoro_enabled=False, pocket_enabled=False))
+  client = TestClient(app)
+
+  response = client.post('/tts/sync', data={'text': 'hello world'})
+
+  assert response.headers.get('Deprecation') == 'true'
