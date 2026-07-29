@@ -23,22 +23,16 @@ This installs a `tts` binary in `~/.local/bin/`.
 
 ### spaCy model (Kokoro only)
 
-Kokoro depends on [misaki](https://github.com/hexgrad/misaki) for grapheme-to-phoneme conversion, which needs a spaCy English model. On first request, misaki tries to download `en_core_web_sm` via `spacy.cli.download`, but that shells out to `pip install` — which doesn't exist inside `uv tool` environments. You'll get a `SystemExit: 1` crash on the first TTS call.
+Kokoro depends on [misaki](https://github.com/hexgrad/misaki) for grapheme-to-phoneme conversion, which needs the spaCy `en_core_web_sm` model. misaki's own auto-download shells out to `pip`, which does not exist in uv environments, so the gateway refuses to load the Kokoro engine when the model is missing and reports the install command instead of crashing mid-request.
 
-Install the model manually into the tool's venv:
-
-```bash
-~/.local/share/uv/tools/tts-gateway/bin/python -m spacy download en_core_web_sm
-```
-
-### Upgrading
-
-`uv tool upgrade` recreates the virtual environment, so the spaCy model must be reinstalled after every upgrade:
+Install the tool with the model wheel alongside it (uv records `--with` in the tool receipt, so it survives `uv tool upgrade` and `tts update`):
 
 ```bash
-uv tool upgrade tts-gateway
-~/.local/share/uv/tools/tts-gateway/bin/python -m spacy download en_core_web_sm
+uv tool install tts-gateway[kokoro] \
+  --with https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 ```
+
+Development checkouts get the model automatically from the dev dependency group via `uv sync --group dev --extra kokoro`.
 
 For local development, see [Development](#development) below.
 
@@ -134,6 +128,16 @@ since it would otherwise dump binary audio to your screen; redirect stdout
 or pass `--output` instead. Pressing Ctrl-C, or closing a pipe early (e.g.
 piping into `head`), stops playback and exits cleanly.
 
+When playing back with no `--output` and stdout is a terminal, `tts speak`
+now requests raw PCM instead of MP3, so ffplay can start decoding on the
+first chunk without waiting for MP3 frame boundaries — this cuts playback
+start latency. Every other mode (writing to a file, teeing to a redirected
+stdout, or `--no-play`) still requests MP3, since those sinks need MP3 bytes.
+
+> **Version skew:** a 1.3.0 `tts speak` requires a 1.3.0 gateway — restart
+> the server after updating, or the client's PCM/JSON requests won't match
+> what an older server expects.
+
 The client commands use `http://127.0.0.1:45123` by default. Set
 `TTS_GATEWAY_URL` when the server uses a different address:
 
@@ -153,27 +157,36 @@ curl -X POST http://localhost:45123/v1/speech -F 'text=Hello world' -F 'voice=af
 # With native speed control when the selected engine supports it
 curl -X POST http://localhost:45123/v1/speech -F 'text=Hello world' -F 'speed=1.25' -o output.mp3
 
-# Legacy compatibility route
+# Legacy compatibility route (deprecated shim, see below)
 curl -X POST http://localhost:45123/tts -F 'text=Hello world' -o output.mp3
 
 # Async job submission
 curl -X POST http://localhost:45123/v1/jobs -F 'text=Hello world' | jq
 
-# Chunk-level audio streaming (always returns MP3)
-curl -X POST http://localhost:45123/tts/stream \
+# Chunk-level audio streaming (defaults to MP3)
+curl -X POST http://localhost:45123/v1/speech/stream \
   -H 'Content-Type: application/json' \
   -d '{"text":"Hello world","speed":1.25}' \
   -o output.mp3
 
 # Raw PCM streaming (preferred for Raycast to avoid multi-chunk MP3 boundary risk)
-curl -X POST http://localhost:45123/tts/stream/pcm \
+curl -X POST http://localhost:45123/v1/speech/stream \
   -H 'Content-Type: application/json' \
-  -d '{"text":"Hello world"}' \
+  -d '{"text":"Hello world","format":"pcm"}' \
   -o output.pcm
 ```
 
-Raycast uses PCM-first streaming (`/tts/stream/pcm`) so playback can start on the
-first raw PCM chunk without stitching independent MP3 frames at chunk joins.
+`/v1/speech/stream` reports the PCM layout on `X-TTS-Pcm-Format`,
+`X-TTS-Sample-Rate`, and `X-TTS-Channels` response headers when
+`format: "pcm"` is requested.
+
+Raycast uses PCM-first streaming (`/v1/speech/stream` with `format: "pcm"`)
+so playback can start on the first raw PCM chunk without stitching
+independent MP3 frames at chunk joins.
+
+`/tts/stream` and `/tts/stream/pcm` remain available as deprecated shims that
+forward to `/v1/speech/stream`; they are slated for removal in v2 — migrate
+to `/v1/speech/stream` directly.
 
 Check server status:
 
@@ -187,7 +200,7 @@ Pre-load models into memory:
 curl -X POST http://localhost:45123/warmup
 ```
 
-When both a primary and fallback engine are configured, the gateway tries the primary first and falls back on failure. Long texts are chunked automatically, synthesized concurrently across native chunks, and stitched into one final output file. The canonical API surface is `/v1/speech`, `/v1/jobs`, and `/v1/jobs/{key}/audio`; `/tts` and `/tts/sync` remain available as compatibility shims.
+When both a primary and fallback engine are configured, the gateway tries the primary first and falls back on failure. Long texts are chunked automatically, synthesized concurrently across native chunks, and stitched into one final output file. The canonical API surface is `/v1/speech`, `/v1/speech/stream`, `/v1/jobs`, and `/v1/jobs/{key}/audio`; `/tts`, `/tts/sync`, `/tts/stream`, and `/tts/stream/pcm` remain available as deprecated compatibility shims slated for removal in v2.
 
 ## Running with PM2
 

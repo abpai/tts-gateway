@@ -19,6 +19,21 @@ _FORMAT_CONTENT_TYPES = {
   '.wav': 'audio/wav',
 }
 
+# ffplay demuxer names by response content type; a known format is passed via
+# -f so ffplay skips stream probing. An unknown content type falls back to
+# probing, and a missing header assumes mp3 (the streaming route's format).
+_CONTENT_TYPE_FFPLAY_FORMATS = {
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+}
+
+# Fallback PCM parameters if the gateway ever omits an X-TTS-* PCM header;
+# match the server's own kokoro/base-engine defaults (24kHz mono 16-bit).
+_DEFAULT_PCM_FORMAT = 's16le'
+_DEFAULT_SAMPLE_RATE = '24000'
+_DEFAULT_CHANNELS = '1'
+
 
 class SpeechCliError(Exception):
   """Report a command-line speech error."""
@@ -68,11 +83,67 @@ def read_speak_text(arguments: list[str], stdin: TextIO | None) -> str:
   return text
 
 
+class _Player:
+  """Own the ffplay subprocess used for streamed playback."""
+
+  def __init__(self, process: subprocess.Popen[bytes]) -> None:
+    self._process = process
+
+  @classmethod
+  def start(cls, ffplay_path: str, format_args: tuple[str, ...]) -> _Player:
+    process = subprocess.Popen(
+      [
+        ffplay_path,
+        '-autoexit',
+        '-nodisp',
+        '-loglevel',
+        'error',
+        *format_args,
+        '-i',
+        'pipe:0',
+      ],
+      stdin=subprocess.PIPE,
+    )
+    return cls(process)
+
+  def write(self, chunk: bytes) -> bool:
+    """Write one chunk to ffplay's stdin; return False on a broken pipe (early stop)."""
+    assert self._process.stdin is not None
+    try:
+      self._process.stdin.write(chunk)
+      self._process.stdin.flush()
+    except BrokenPipeError:
+      return False
+    return True
+
+  def finish(self, *, body_completed: bool) -> None:
+    """Wait for the player and surface a real failure, without masking earlier errors.
+
+    A non-zero exit only counts as an error if the streaming body finished
+    without incident; a negative return code (killed by signal, e.g. Ctrl-C)
+    or an early user quit is a normal stop, not an error.
+
+    No timeout on wait(): ffplay legitimately keeps playing buffered audio
+    after EOF, and a timeout would kill valid playback.
+    """
+    if self._process.stdin is not None:
+      try:
+        self._process.stdin.close()
+      except BrokenPipeError:
+        pass
+    return_code = self._process.wait()
+    if body_completed and return_code > 0:
+      raise SpeechCliError(f'ffplay exited with status {return_code}')
+
+
 def speak(options: SpeakOptions, stdout: BinaryIO) -> None:
   """Stream synthesized audio to playback, a file, or standard output.
 
-  Opens the output sink and spawns the player before sending the request, so
-  a bad --output path or a missing ffplay binary fails before synthesis runs.
+  Resolves the output sink and the ffplay binary before sending the request,
+  so a bad --output path or a missing ffplay binary fails before synthesis
+  runs. The ffplay process itself is spawned only after the response headers
+  are validated, so a gateway error never leaves an orphaned player process,
+  and PCM playback can size its decoder from the response's PCM headers.
   """
   timeout = httpx.Timeout(
     connect=options.connect_timeout,
@@ -82,18 +153,32 @@ def speak(options: SpeakOptions, stdout: BinaryIO) -> None:
   )
   with ExitStack() as stack:
     output = _open_output(stack, options, stdout)
-    player = _open_player(options) if options.play else None
+    flush_output = output is stdout
+    ffplay_path = _resolve_ffplay(options.ffplay_path) if options.play else None
+    play_pcm = ffplay_path is not None and _wants_pcm(options, stdout)
+    request_format = 'pcm' if play_pcm else None
+    player: _Player | None = None
     body_completed = False
     try:
       with httpx.Client(timeout=timeout) as client:
-        with _speech_response(client, options) as response:
+        with _speech_response(
+          client, options, request_format=request_format
+        ) as response:
           _raise_response_error(response)
           _warn_format_mismatch(response, options)
-          body_completed = _consume_audio(response, output, player)
+          if ffplay_path is not None:
+            format_args = (
+              _pcm_ffplay_args(response) if play_pcm else _encoded_ffplay_args(response)
+            )
+            player = _Player.start(ffplay_path, format_args)
+          body_completed = _consume_audio(
+            response, output, player, flush_output=flush_output
+          )
     except httpx.HTTPError as exc:
       raise SpeechCliError(f'gateway request failed: {exc}') from exc
     finally:
-      _finish_player(player, body_completed=body_completed)
+      if player is not None:
+        player.finish(body_completed=body_completed)
 
 
 def fetch_health(base_url: str, timeout: float) -> HealthReport:
@@ -135,18 +220,19 @@ def format_config(report: HealthReport, base_url: str) -> str:
 def _speech_response(
   client: httpx.Client,
   options: SpeakOptions,
+  *,
+  request_format: str | None = None,
 ) -> AbstractContextManager[httpx.Response]:
   payload: dict[str, str | float] = {'text': options.text}
   if options.voice is not None:
     payload['voice'] = options.voice
   if options.speed is not None:
     payload['speed'] = options.speed
-  endpoint = '/tts/stream' if options.stream else '/v1/speech'
+  if request_format is not None:
+    payload['format'] = request_format
+  endpoint = '/v1/speech/stream' if options.stream else '/v1/speech'
   url = f'{options.base_url.rstrip("/")}{endpoint}'
-  if options.stream:
-    return client.stream('POST', url, json=payload)
-  form_payload = {name: str(value) for name, value in payload.items()}
-  return client.stream('POST', url, data=form_payload)
+  return client.stream('POST', url, json=payload)
 
 
 def _raise_response_error(response: httpx.Response) -> None:
@@ -177,10 +263,60 @@ def _warn_format_mismatch(response: httpx.Response, options: SpeakOptions) -> No
     )
 
 
+def _wants_pcm(options: SpeakOptions, stdout: BinaryIO) -> bool:
+  """True for the play-only path: play enabled, no --output, stdout is a tty.
+
+  Streaming-only: /v1/speech (non-streaming) has no format field, so
+  --no-stream always requests mp3.
+  """
+  if not options.stream or not options.play or options.output is not None:
+    return False
+  return bool(getattr(stdout, 'isatty', lambda: False)())
+
+
+def _encoded_ffplay_args(response: httpx.Response) -> tuple[str, ...]:
+  """Build ffplay args for an encoded (mp3/wav) stream from its Content-Type.
+
+  The non-streaming /v1/speech route returns the gateway's configured format,
+  which may be wav — telling ffplay the wrong format would break playback.
+  """
+  content_type = response.headers.get('content-type', '').split(';')[0].strip().lower()
+  if not content_type:
+    return ('-f', 'mp3', '-fflags', 'nobuffer')
+  ffplay_format = _CONTENT_TYPE_FFPLAY_FORMATS.get(content_type)
+  if ffplay_format is None:
+    return ('-fflags', 'nobuffer')  # unknown format: let ffplay probe
+  return ('-f', ffplay_format, '-fflags', 'nobuffer')
+
+
+def _pcm_ffplay_args(response: httpx.Response) -> tuple[str, ...]:
+  """Build ffplay's raw-PCM decode args from the response's X-TTS-* PCM headers.
+
+  ffplay has no -ac option (that is the ffmpeg CLI); the channel count must be
+  expressed as a -ch_layout name.
+  """
+  pcm_format = response.headers.get('x-tts-pcm-format', _DEFAULT_PCM_FORMAT)
+  sample_rate = response.headers.get('x-tts-sample-rate', _DEFAULT_SAMPLE_RATE)
+  channels = response.headers.get('x-tts-channels', _DEFAULT_CHANNELS)
+  layout = {'1': 'mono', '2': 'stereo'}.get(channels, f'{channels}c')
+  return (
+    '-f',
+    pcm_format,
+    '-ar',
+    sample_rate,
+    '-ch_layout',
+    layout,
+    '-fflags',
+    'nobuffer',
+  )
+
+
 def _consume_audio(
   response: httpx.Response,
   output: BinaryIO,
-  player: subprocess.Popen[bytes] | None,
+  player: _Player | None,
+  *,
+  flush_output: bool,
 ) -> bool:
   """Write streamed audio chunks to the output sink and player.
 
@@ -191,10 +327,11 @@ def _consume_audio(
   for chunk in response.iter_bytes():
     try:
       output.write(chunk)
-      if player is not None and player.stdin is not None:
-        player.stdin.write(chunk)
-        player.stdin.flush()
+      if flush_output:
+        output.flush()
     except BrokenPipeError:
+      return False
+    if player is not None and not player.write(chunk):
       return False
   return True
 
@@ -221,40 +358,9 @@ def _open_output(
   return stdout
 
 
-def _open_player(options: SpeakOptions) -> subprocess.Popen[bytes]:
-  ffplay_path = shutil.which(options.ffplay_path)
-  if ffplay_path is None:
-    raise SpeechCliError(f'ffplay executable not found: {options.ffplay_path}')
-  return subprocess.Popen(
-    [
-      ffplay_path,
-      '-autoexit',
-      '-nodisp',
-      '-loglevel',
-      'error',
-      '-i',
-      'pipe:0',
-    ],
-    stdin=subprocess.PIPE,
-  )
-
-
-def _finish_player(
-  player: subprocess.Popen[bytes] | None, *, body_completed: bool
-) -> None:
-  """Wait for the player and surface a real failure, without masking earlier errors.
-
-  A non-zero exit only counts as an error if the streaming body finished
-  without incident; a negative return code (killed by signal, e.g. Ctrl-C)
-  or an early user quit is a normal stop, not an error.
-  """
-  if player is None:
-    return
-  if player.stdin is not None:
-    try:
-      player.stdin.close()
-    except BrokenPipeError:
-      pass
-  return_code = player.wait()
-  if body_completed and return_code > 0:
-    raise SpeechCliError(f'ffplay exited with status {return_code}')
+def _resolve_ffplay(ffplay_path: str) -> str:
+  """Resolve the ffplay executable, failing fast before the network request."""
+  resolved = shutil.which(ffplay_path)
+  if resolved is None:
+    raise SpeechCliError(f'ffplay executable not found: {ffplay_path}')
+  return resolved
