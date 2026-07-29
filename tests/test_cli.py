@@ -190,6 +190,135 @@ def test_speak_supports_no_play_and_no_stream() -> None:
   assert args.stream is False
 
 
+def test_integrate_parser_supports_all_user_commands() -> None:
+  parser = cli.build_parser()
+
+  assert parser.parse_args(['integrate', 'install', 'all']).target == 'all'
+  assert parser.parse_args(['integrate', 'uninstall', 'codex']).target == 'codex'
+  assert parser.parse_args(['integrate', 'status']).target is None
+  event = parser.parse_args(['integrate', '--codex-event'])
+  assert event.codex_event is True
+
+
+def test_integration_targets_expands_all() -> None:
+  assert cli._integration_targets('all') == ('codex', 'claude')
+  assert cli._integration_targets('codex') == ('codex',)
+
+
+def test_integrate_cli_install_status_and_uninstall_all(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+  capsys: pytest.CaptureFixture[str],
+) -> None:
+  root = tmp_path / 'state'
+  monkeypatch.setattr(cli, 'state_root', lambda: root)
+  monkeypatch.setattr(cli, 'codex_hooks_path', lambda: tmp_path / 'hooks.json')
+  monkeypatch.setattr(
+    cli,
+    'claude_settings_path',
+    lambda: tmp_path / 'settings.json',
+  )
+  monkeypatch.setattr(cli, 'resolve_tts_executable', lambda: '/usr/bin/tts')
+
+  cli.main(['integrate', 'install', 'all'])
+  assert capsys.readouterr().out == (
+    'codex   installed\n'
+    'claude  installed\n'
+    'Run /hooks in Codex to review and trust the new hooks.\n'
+  )
+
+  cli.main(['integrate', 'status'])
+  assert capsys.readouterr().out == ('codex   installed\nclaude  installed\n')
+
+  cli.main(['integrate', 'uninstall', 'all'])
+  assert capsys.readouterr().out == ('codex   uninstalled\nclaude  uninstalled\n')
+  assert not (tmp_path / 'hooks.json').exists()
+  assert not (tmp_path / 'settings.json').exists()
+
+
+def test_integrate_all_rolls_back_first_install_when_second_fails(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+) -> None:
+  calls: list[tuple[str, bool]] = []
+
+  def change(
+    target: str,
+    install: bool,
+    _executable: str,
+    _root: Path,
+  ) -> bool:
+    calls.append((target, install))
+    if target == 'claude' and install:
+      raise SpeechCliError('invalid Claude settings')
+    return True
+
+  monkeypatch.setattr(cli, 'state_root', lambda: tmp_path)
+  monkeypatch.setattr(cli, 'resolve_tts_executable', lambda: '/usr/bin/tts')
+  monkeypatch.setattr(cli, '_change_integration', change)
+
+  with pytest.raises(SpeechCliError, match='invalid Claude settings'):
+    cli._change_integrations('all', install=True)
+
+  assert calls == [
+    ('codex', True),
+    ('claude', True),
+    ('codex', False),
+  ]
+
+
+def test_codex_integration_event_reads_stdin_and_returns_json(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+  capsys: pytest.CaptureFixture[str],
+) -> None:
+  calls: list[tuple[str, Path, Path]] = []
+  monkeypatch.setattr(cli, 'state_root', lambda: tmp_path)
+  monkeypatch.setattr(cli.sys, 'stdin', StringIO('{"hook_event_name":"Stop"}'))
+  monkeypatch.setattr(
+    cli.codex_integration,
+    'handle_event',
+    lambda payload, record, root: calls.append((payload, record, root)),
+  )
+
+  cli.main(['integrate', '--codex-event'])
+
+  assert calls == [
+    (
+      '{"hook_event_name":"Stop"}',
+      tmp_path / 'codex.json',
+      tmp_path,
+    )
+  ]
+  assert capsys.readouterr().out == '{}\n'
+
+
+def test_claude_integration_event_reads_stdin(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+  capsys: pytest.CaptureFixture[str],
+) -> None:
+  calls: list[tuple[str, Path, Path]] = []
+  monkeypatch.setattr(cli, 'state_root', lambda: tmp_path)
+  monkeypatch.setattr(cli.sys, 'stdin', StringIO('{"hook_event_name":"Stop"}'))
+  monkeypatch.setattr(
+    cli.claude_integration,
+    'handle_event',
+    lambda payload, record, root: calls.append((payload, record, root)),
+  )
+
+  cli.main(['integrate', '--claude-event'])
+
+  assert calls == [
+    (
+      '{"hook_event_name":"Stop"}',
+      tmp_path / 'claude.json',
+      tmp_path,
+    )
+  ]
+  assert capsys.readouterr().out == ''
+
+
 def test_read_speak_text_from_stdin() -> None:
   assert read_speak_text([], StringIO('hi from stdin\n')) == 'hi from stdin'
 

@@ -12,6 +12,16 @@ import warnings
 from pathlib import Path
 
 from tts_gateway.config import DEFAULT_MODELS_DIR
+from tts_gateway.integrations import claude as claude_integration
+from tts_gateway.integrations import codex as codex_integration
+from tts_gateway.integrations.common import (
+  claude_settings_path,
+  codex_hooks_path,
+  read_event_payload,
+  resolve_tts_executable,
+  speak_file,
+  state_root,
+)
 from tts_gateway.speech_cli import (
   SpeakOptions,
   SpeechCliError,
@@ -130,6 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
   _add_worker_parser(sub)
   _add_speak_parser(sub)
   _add_status_parsers(sub)
+  _add_integrate_parser(sub)
   sub.add_parser('update', help='Update the installed tts-gateway tool')
   return parser
 
@@ -204,6 +215,31 @@ def _add_status_parsers(sub: argparse._SubParsersAction) -> None:
   _add_gateway_args(config)
 
 
+def _add_integrate_parser(sub: argparse._SubParsersAction) -> None:
+  """Add coding-agent integration commands."""
+  integrate = sub.add_parser(
+    'integrate',
+    help='Install Codex and Claude Code speech integrations',
+  )
+  actions = integrate.add_subparsers(dest='integrate_action')
+  for action in ('install', 'uninstall'):
+    parser = actions.add_parser(action, help=f'{action.title()} an integration')
+    parser.add_argument('target', choices=['codex', 'claude', 'all'])
+  status = actions.add_parser('status', help='Show integration status')
+  status.add_argument('target', nargs='?', choices=['codex', 'claude', 'all'])
+  integrate.add_argument(
+    '--codex-event',
+    action='store_true',
+    help=argparse.SUPPRESS,
+  )
+  integrate.add_argument(
+    '--claude-event',
+    action='store_true',
+    help=argparse.SUPPRESS,
+  )
+  integrate.add_argument('--speak-file', type=Path, help=argparse.SUPPRESS)
+
+
 def _add_gateway_args(
   parser: argparse.ArgumentParser, *, timeout_label: str = 'Request'
 ) -> None:
@@ -236,6 +272,8 @@ def main(argv: list[str] | None = None) -> None:
       _run_health(args)
     elif args.command == 'config':
       _run_config(args)
+    elif args.command == 'integrate':
+      _run_integrate(args)
     elif args.command == 'update':
       _run_update()
     else:
@@ -273,6 +311,98 @@ def _run_health(args: argparse.Namespace) -> None:
 def _run_config(args: argparse.Namespace) -> None:
   report = fetch_health(args.base_url, args.timeout)
   print(format_config(report, args.base_url))
+
+
+def _run_integrate(args: argparse.Namespace) -> None:
+  """Run one coding-agent integration command."""
+  if args.codex_event:
+    _run_integration_event('codex')
+  elif args.claude_event:
+    _run_integration_event('claude')
+  elif args.speak_file is not None:
+    with Path(os.devnull).open('wb') as output:
+      speak_file(args.speak_file, output)
+  elif args.integrate_action == 'install':
+    _change_integrations(args.target, install=True)
+  elif args.integrate_action == 'uninstall':
+    _change_integrations(args.target, install=False)
+  elif args.integrate_action == 'status':
+    _show_integration_status(args.target or 'all')
+  else:
+    raise SpeechCliError('integration action is required')
+
+
+def _change_integrations(target: str, *, install: bool) -> None:
+  root = state_root()
+  executable = resolve_tts_executable()
+  results: list[tuple[str, bool]] = []
+  try:
+    for name in _integration_targets(target):
+      changed = _change_integration(name, install, executable, root)
+      results.append((name, changed))
+  except SpeechCliError:
+    if install:
+      _roll_back_installs(results, executable, root)
+    raise
+  action = 'installed' if install else 'uninstalled'
+  for name, changed in results:
+    print(f'{name:<6}  {action if changed else "unchanged"}')
+  if install and ('codex', True) in results:
+    print('Run /hooks in Codex to review and trust the new hooks.')
+
+
+def _roll_back_installs(
+  results: list[tuple[str, bool]],
+  executable: str,
+  root: Path,
+) -> None:
+  for name, changed in reversed(results):
+    if changed:
+      _change_integration(name, False, executable, root)
+
+
+def _change_integration(
+  target: str,
+  install: bool,
+  executable: str,
+  root: Path,
+) -> bool:
+  if target == 'codex':
+    paths = (codex_hooks_path(), root / 'codex.json')
+    if install:
+      return codex_integration.install(*paths, executable, root)
+    return codex_integration.uninstall(*paths)
+  paths = (claude_settings_path(), root / 'claude.json')
+  if install:
+    return claude_integration.install(*paths, executable, root)
+  return claude_integration.uninstall(*paths)
+
+
+def _show_integration_status(target: str) -> None:
+  root = state_root()
+  for name in _integration_targets(target):
+    if name == 'codex':
+      result = codex_integration.status(codex_hooks_path(), root / 'codex.json')
+    else:
+      result = claude_integration.status(
+        claude_settings_path(),
+        root / 'claude.json',
+      )
+    print(f'{name:<6}  {result}')
+
+
+def _run_integration_event(target: str) -> None:
+  root = state_root()
+  payload = read_event_payload(sys.stdin)
+  if target == 'codex':
+    codex_integration.handle_event(payload, root / 'codex.json', root)
+    print('{}')
+    return
+  claude_integration.handle_event(payload, root / 'claude.json', root)
+
+
+def _integration_targets(target: str) -> tuple[str, ...]:
+  return ('codex', 'claude') if target == 'all' else (target,)
 
 
 def _run_update() -> None:

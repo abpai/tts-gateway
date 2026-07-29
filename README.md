@@ -84,6 +84,50 @@ tts --version
 tts update
 ```
 
+### Codex and Claude Code
+
+Install optional coding-agent integrations:
+
+```bash
+tts integrate install codex
+tts integrate install claude
+tts integrate install all
+```
+
+Add `{speak back}` to a prompt to play only that prompt's final response:
+
+```text
+Explain how the streaming endpoint works. {speak back}
+```
+
+Set `TTS_SPEAK_MARKER` to use a different marker, for example
+`TTS_SPEAK_MARKER='{speak}'` for a shorter trigger.
+
+Both integrations use `UserPromptSubmit` plus `Stop` lifecycle hooks. Research
+updates, tool calls, and subagent responses are not spoken. The final response
+still appears in the agent chat.
+
+After Codex installation, open `/hooks` in Codex and trust the new user hooks.
+Codex skips new command hooks until you review and trust them.
+
+The installer preserves existing Codex and Claude hooks. It stores private
+backups and installation state under
+`${XDG_STATE_HOME:-~/.local/state}/tts-gateway/integrations`. Installation is
+safe to repeat.
+
+Check or remove the integrations:
+
+```bash
+tts integrate status
+tts integrate uninstall codex
+tts integrate uninstall claude
+tts integrate uninstall all
+```
+
+Uninstall restores the exact prior configuration when it has not changed. If
+other settings changed later, uninstall removes only the TTS-owned entries and
+keeps the unrelated changes. It refuses to overwrite a changed TTS-owned entry.
+
 Start the server:
 
 ```bash
