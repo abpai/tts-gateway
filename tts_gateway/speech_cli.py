@@ -50,6 +50,7 @@ class SpeakOptions:
   output: Path | None = None
   play: bool = True
   stream: bool = True
+  play_only: bool = False
   ffplay_path: str = 'ffplay'
   connect_timeout: float = 5.0
 
@@ -266,11 +267,17 @@ def _warn_format_mismatch(response: httpx.Response, options: SpeakOptions) -> No
 def _wants_pcm(options: SpeakOptions, stdout: BinaryIO) -> bool:
   """True for the play-only path: play enabled, no --output, stdout is a tty.
 
+  `play_only` skips the tty sniff: callers that only ever play (the agent
+  integrations run detached with stdout on /dev/null) still get raw PCM,
+  which starts fast and never loses leading audio to stream probing.
+
   Streaming-only: /v1/speech (non-streaming) has no format field, so
   --no-stream always requests mp3.
   """
   if not options.stream or not options.play or options.output is not None:
     return False
+  if options.play_only:
+    return True
   return bool(getattr(stdout, 'isatty', lambda: False)())
 
 
@@ -279,14 +286,18 @@ def _encoded_ffplay_args(response: httpx.Response) -> tuple[str, ...]:
 
   The non-streaming /v1/speech route returns the gateway's configured format,
   which may be wav — telling ffplay the wrong format would break playback.
+
+  No -fflags nobuffer here: on encoded live streams it makes ffplay discard
+  the data consumed during stream analysis, audibly cutting off the first
+  words. Raw PCM playback keeps it, where analysis consumes nothing.
   """
   content_type = response.headers.get('content-type', '').split(';')[0].strip().lower()
   if not content_type:
-    return ('-f', 'mp3', '-fflags', 'nobuffer')
+    return ('-f', 'mp3')
   ffplay_format = _CONTENT_TYPE_FFPLAY_FORMATS.get(content_type)
   if ffplay_format is None:
-    return ('-fflags', 'nobuffer')  # unknown format: let ffplay probe
-  return ('-f', ffplay_format, '-fflags', 'nobuffer')
+    return ()  # unknown format: let ffplay probe
+  return ('-f', ffplay_format)
 
 
 def _pcm_ffplay_args(response: httpx.Response) -> tuple[str, ...]:
@@ -348,7 +359,7 @@ def _open_output(
       raise SpeechCliError(f'cannot open output file: {exc}') from exc
   is_tty = getattr(stdout, 'isatty', lambda: False)()
   if options.play:
-    if is_tty:
+    if is_tty or options.play_only:
       return stack.enter_context(Path(os.devnull).open('wb'))
     return stdout  # tee: redirected stdout also receives the audio bytes
   if is_tty:
