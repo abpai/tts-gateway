@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from tts_gateway.speech_cli import SpeakOptions, SpeechCliError, speak
 
-SPEAK_BACK_MARKER = '{speak back}'
+SPEAK_BACK_MARKER = '{tts}'
 
 
 def speak_marker() -> str:
@@ -54,11 +54,25 @@ def codex_hooks_path() -> Path:
   return base / 'hooks.json'
 
 
+def codex_agents_path() -> Path:
+  """Return the active user Codex agent instructions path."""
+  codex_home = os.getenv('CODEX_HOME')
+  base = Path(codex_home).expanduser() if codex_home else Path.home() / '.codex'
+  return base / 'AGENTS.md'
+
+
 def claude_settings_path() -> Path:
   """Return the active user Claude settings path."""
   config_dir = os.getenv('CLAUDE_CONFIG_DIR')
   base = Path(config_dir).expanduser() if config_dir else Path.home() / '.claude'
   return base / 'settings.json'
+
+
+def claude_memory_path() -> Path:
+  """Return the active user Claude memory instructions path."""
+  config_dir = os.getenv('CLAUDE_CONFIG_DIR')
+  base = Path(config_dir).expanduser() if config_dir else Path.home() / '.claude'
+  return base / 'CLAUDE.md'
 
 
 def resolve_tts_executable() -> str:
