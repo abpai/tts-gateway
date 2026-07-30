@@ -14,8 +14,11 @@ from pathlib import Path
 from tts_gateway.config import DEFAULT_MODELS_DIR
 from tts_gateway.integrations import claude as claude_integration
 from tts_gateway.integrations import codex as codex_integration
+from tts_gateway.integrations import instructions
 from tts_gateway.integrations.common import (
+  claude_memory_path,
   claude_settings_path,
+  codex_agents_path,
   codex_hooks_path,
   read_event_payload,
   resolve_tts_executable,
@@ -370,12 +373,16 @@ def _change_integration(
   if target == 'codex':
     paths = (codex_hooks_path(), root / 'codex.json')
     if install:
-      return codex_integration.install(*paths, executable, root)
-    return codex_integration.uninstall(*paths)
+      hooks_changed = codex_integration.install(*paths, executable, root)
+      return instructions.install(codex_agents_path()) or hooks_changed
+    hooks_changed = codex_integration.uninstall(*paths)
+    return instructions.uninstall(codex_agents_path()) or hooks_changed
   paths = (claude_settings_path(), root / 'claude.json')
   if install:
-    return claude_integration.install(*paths, executable, root)
-  return claude_integration.uninstall(*paths)
+    hooks_changed = claude_integration.install(*paths, executable, root)
+    return instructions.install(claude_memory_path()) or hooks_changed
+  hooks_changed = claude_integration.uninstall(*paths)
+  return instructions.uninstall(claude_memory_path()) or hooks_changed
 
 
 def _show_integration_status(target: str) -> None:

@@ -94,14 +94,19 @@ tts integrate install claude
 tts integrate install all
 ```
 
-Add `{speak back}` to a prompt to play only that prompt's final response:
+Add `{tts}` to a prompt to play only that prompt's final response:
 
 ```text
-Explain how the streaming endpoint works. {speak back}
+Explain how the streaming endpoint works. {tts}
 ```
 
 Set `TTS_SPEAK_MARKER` to use a different marker, for example
-`TTS_SPEAK_MARKER='{speak}'` for a shorter trigger.
+`TTS_SPEAK_MARKER='{speak}'` for a different trigger.
+
+The installer also appends a short guidance block to `~/.claude/CLAUDE.md`
+and `~/.codex/AGENTS.md` so the agents treat the marker as metadata and do
+not repeat or mention it. Uninstall removes the block and keeps the rest of
+each file.
 
 Both integrations use `UserPromptSubmit` plus `Stop` lifecycle hooks. Research
 updates, tool calls, and subagent responses are not spoken. The final response

@@ -213,11 +213,13 @@ def test_integrate_cli_install_status_and_uninstall_all(
   root = tmp_path / 'state'
   monkeypatch.setattr(cli, 'state_root', lambda: root)
   monkeypatch.setattr(cli, 'codex_hooks_path', lambda: tmp_path / 'hooks.json')
+  monkeypatch.setattr(cli, 'codex_agents_path', lambda: tmp_path / 'AGENTS.md')
   monkeypatch.setattr(
     cli,
     'claude_settings_path',
     lambda: tmp_path / 'settings.json',
   )
+  monkeypatch.setattr(cli, 'claude_memory_path', lambda: tmp_path / 'CLAUDE.md')
   monkeypatch.setattr(cli, 'resolve_tts_executable', lambda: '/usr/bin/tts')
 
   cli.main(['integrate', 'install', 'all'])
@@ -226,6 +228,8 @@ def test_integrate_cli_install_status_and_uninstall_all(
     'claude  installed\n'
     'Run /hooks in Codex to review and trust the new hooks.\n'
   )
+  assert '{tts}' in (tmp_path / 'AGENTS.md').read_text()
+  assert '{tts}' in (tmp_path / 'CLAUDE.md').read_text()
 
   cli.main(['integrate', 'status'])
   assert capsys.readouterr().out == ('codex   installed\nclaude  installed\n')
@@ -234,6 +238,8 @@ def test_integrate_cli_install_status_and_uninstall_all(
   assert capsys.readouterr().out == ('codex   uninstalled\nclaude  uninstalled\n')
   assert not (tmp_path / 'hooks.json').exists()
   assert not (tmp_path / 'settings.json').exists()
+  assert not (tmp_path / 'AGENTS.md').exists()
+  assert not (tmp_path / 'CLAUDE.md').exists()
 
 
 def test_integrate_all_rolls_back_first_install_when_second_fails(

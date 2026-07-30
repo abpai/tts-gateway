@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from tts_gateway.integrations import claude, codex
+from tts_gateway.integrations import claude, codex, instructions
 from tts_gateway.integrations.common import (
   IntegrationError,
   queue_speech,
@@ -137,7 +137,7 @@ def test_codex_prompt_and_stop_queue_once(tmp_path: Path) -> None:
     queued.append((text, executable, state))
 
   codex.handle_event(
-    _codex_payload('UserPromptSubmit', prompt='Explain it {speak back}'),
+    _codex_payload('UserPromptSubmit', prompt='Explain it {tts}'),
     record,
     root,
     enqueue=enqueue,
@@ -163,7 +163,7 @@ def test_codex_unmarked_prompt_clears_pending_speech(tmp_path: Path) -> None:
   codex.install(hooks, record, _TTS, root)
   queued: list[str] = []
   codex.handle_event(
-    _codex_payload('UserPromptSubmit', prompt='First {speak back}'),
+    _codex_payload('UserPromptSubmit', prompt='First {tts}'),
     record,
     root,
   )
@@ -187,7 +187,7 @@ def test_codex_stop_without_assistant_message_is_ignored(tmp_path: Path) -> None
   codex.install(hooks, record, _TTS, root)
   queued: list[str] = []
   codex.handle_event(
-    _codex_payload('UserPromptSubmit', prompt='Explain it {speak back}'),
+    _codex_payload('UserPromptSubmit', prompt='Explain it {tts}'),
     record,
     root,
   )
@@ -291,7 +291,7 @@ def test_claude_prompt_and_stop_queue_once(tmp_path: Path) -> None:
     queued.append((text, executable, state))
 
   claude.handle_event(
-    _claude_payload('UserPromptSubmit', prompt='Explain it {speak back}'),
+    _claude_payload('UserPromptSubmit', prompt='Explain it {tts}'),
     record,
     root,
     enqueue=enqueue,
@@ -317,7 +317,7 @@ def test_claude_unmarked_prompt_clears_pending_speech(tmp_path: Path) -> None:
   claude.install(settings, record, _TTS, root)
   queued: list[str] = []
   claude.handle_event(
-    _claude_payload('UserPromptSubmit', prompt='First {speak back}'),
+    _claude_payload('UserPromptSubmit', prompt='First {tts}'),
     record,
     root,
   )
@@ -375,7 +375,7 @@ def test_claude_accepts_user_prompt_field_alias(tmp_path: Path) -> None:
   queued: list[str] = []
 
   claude.handle_event(
-    _claude_payload('UserPromptSubmit', user_prompt='Explain it {speak back}'),
+    _claude_payload('UserPromptSubmit', user_prompt='Explain it {tts}'),
     record,
     root,
   )
@@ -410,6 +410,69 @@ def test_marker_is_configurable_via_environment(
   )
 
   assert queued == ['Spoken.']
+
+
+def test_instructions_install_appends_block_and_repeats_safely(
+  tmp_path: Path,
+) -> None:
+  path = tmp_path / 'CLAUDE.md'
+
+  assert instructions.install(path) is True
+  text = path.read_text()
+  assert text == instructions.render_block()
+  assert '`{tts}`' in text
+
+  assert instructions.install(path) is False
+  assert path.read_text() == text
+
+
+def test_instructions_install_preserves_existing_text(tmp_path: Path) -> None:
+  path = tmp_path / 'AGENTS.md'
+  path.write_text('# My rules\n')
+
+  assert instructions.install(path) is True
+
+  assert path.read_text() == '# My rules\n\n' + instructions.render_block()
+
+
+def test_instructions_uninstall_restores_surrounding_text(tmp_path: Path) -> None:
+  path = tmp_path / 'CLAUDE.md'
+  path.write_text('# My rules\n')
+  instructions.install(path)
+  path.write_text(path.read_text() + '\n## Later rules\n')
+
+  assert instructions.uninstall(path) is True
+
+  assert path.read_text() == '# My rules\n\n## Later rules\n'
+  assert instructions.uninstall(path) is False
+
+
+def test_instructions_uninstall_removes_file_it_created(tmp_path: Path) -> None:
+  path = tmp_path / 'CLAUDE.md'
+  instructions.install(path)
+
+  assert instructions.uninstall(path) is True
+
+  assert not path.exists()
+
+
+def test_instructions_uninstall_refuses_broken_block(tmp_path: Path) -> None:
+  path = tmp_path / 'CLAUDE.md'
+  path.write_text('<!-- tts-gateway:begin -->\ntruncated\n')
+
+  with pytest.raises(IntegrationError, match='no end marker'):
+    instructions.uninstall(path)
+
+
+def test_instructions_block_uses_env_marker(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  monkeypatch.setenv('TTS_SPEAK_MARKER', '{speak}')
+  path = tmp_path / 'CLAUDE.md'
+
+  instructions.install(path)
+
+  assert '`{speak}`' in path.read_text()
 
 
 def test_default_marker_ignores_env_marker_prompts(
