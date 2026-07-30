@@ -173,6 +173,7 @@ def speak_text(text: str, stdout: BinaryIO) -> None:
   options = SpeakOptions(
     text=text,
     base_url=os.getenv('TTS_GATEWAY_URL', 'http://127.0.0.1:45123'),
+    play_only=True,
   )
   speak(options, stdout)
 

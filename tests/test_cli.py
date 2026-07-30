@@ -447,6 +447,16 @@ def test_wants_pcm_true_only_for_play_only_tty_stream_mode() -> None:
   assert _wants_pcm(with_output, _FakeStdout(tty=True)) is False
 
 
+def test_wants_pcm_play_only_ignores_tty() -> None:
+  play_only = SpeakOptions('hello', 'http://gateway', play_only=True)
+
+  assert _wants_pcm(play_only, _FakeStdout(tty=False)) is True
+  assert _wants_pcm(play_only, _FakeStdout(tty=True)) is True
+
+  no_stream = SpeakOptions('hello', 'http://gateway', stream=False, play_only=True)
+  assert _wants_pcm(no_stream, _FakeStdout(tty=False)) is False
+
+
 def test_pcm_ffplay_args_uses_response_headers() -> None:
   response = httpx.Response(
     200,
@@ -488,20 +498,20 @@ def test_encoded_ffplay_args_maps_content_type_to_demuxer() -> None:
   mp3 = httpx.Response(200, headers={'content-type': 'audio/mpeg'})
   wav = httpx.Response(200, headers={'content-type': 'audio/wav; charset=binary'})
 
-  assert _encoded_ffplay_args(mp3) == ('-f', 'mp3', '-fflags', 'nobuffer')
-  assert _encoded_ffplay_args(wav) == ('-f', 'wav', '-fflags', 'nobuffer')
+  assert _encoded_ffplay_args(mp3) == ('-f', 'mp3')
+  assert _encoded_ffplay_args(wav) == ('-f', 'wav')
 
 
 def test_encoded_ffplay_args_assumes_mp3_when_content_type_missing() -> None:
   response = httpx.Response(200)
 
-  assert _encoded_ffplay_args(response) == ('-f', 'mp3', '-fflags', 'nobuffer')
+  assert _encoded_ffplay_args(response) == ('-f', 'mp3')
 
 
 def test_encoded_ffplay_args_probes_on_unknown_content_type() -> None:
   response = httpx.Response(200, headers={'content-type': 'audio/ogg'})
 
-  assert _encoded_ffplay_args(response) == ('-fflags', 'nobuffer')
+  assert _encoded_ffplay_args(response) == ()
 
 
 def test_speak_no_stream_wav_gateway_uses_wav_demuxer(
@@ -772,7 +782,7 @@ def test_speak_file_output_requests_mp3_and_uses_mp3_ffplay_args(
   assert len(processes) == 1
   argv = processes[0].argv
   assert argv[argv.index('-f') + 1] == 'mp3'
-  assert argv[argv.index('-fflags') + 1] == 'nobuffer'
+  assert '-fflags' not in argv
   assert argv[-2:] == ['-i', 'pipe:0']
   assert output_path.read_bytes() == b'audio'
 
