@@ -90,9 +90,11 @@ def _set_minimal_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
 
 def test_load_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
   _set_minimal_env(monkeypatch)
+  monkeypatch.delenv('TINY_VOCA_TTS_ENABLED', raising=False)
   cfg = load_config()
   assert cfg.kokoro_enabled is True
   assert cfg.pocket_enabled is False
+  assert cfg.tiny_voca_enabled is False
   assert cfg.device_mode == 'auto'
   assert cfg.output_format == 'wav'
   assert cfg.chunk_max_chars == 500

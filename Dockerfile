@@ -19,14 +19,14 @@ WORKDIR /app
 
 COPY pyproject.toml README.md uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra all --no-install-project \
+    uv sync --frozen --no-dev --extra kokoro --extra pocket --no-install-project \
     && .venv/bin/python -m ensurepip
 
 COPY scripts ./scripts
 COPY tts_gateway ./tts_gateway
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra all \
+    uv sync --frozen --no-dev --extra kokoro --extra pocket \
     && uv pip install --python .venv/bin/python \
       'en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl'
 

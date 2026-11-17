@@ -20,7 +20,8 @@ dependencies = [
 [project.optional-dependencies]
 kokoro = ["kokoro>=0.9", "torch>=2.10,<2.11"]
 pocket = ["pocket-tts>=0.1", "torch>=2.10,<2.11"]
-all = ["kokoro>=0.9", "pocket-tts>=0.1", "torch>=2.10,<2.11"]
+tiny-voca = ["onnxruntime>=1.20.1,<2", "huggingface-hub>=0.34,<2"]
+all = ["tts-gateway[kokoro,pocket,tiny-voca]"]
 
 [project.urls]
 Repository = "https://github.com/abpai/tts-gateway"

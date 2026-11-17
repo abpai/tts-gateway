@@ -11,7 +11,7 @@ import sys
 import warnings
 from pathlib import Path
 
-from tts_gateway.config import DEFAULT_MODELS_DIR
+from tts_gateway.config import DEFAULT_MODELS_DIR, ENGINE_NAMES
 from tts_gateway.integrations import claude as claude_integration
 from tts_gateway.integrations import codex as codex_integration
 from tts_gateway.integrations import instructions
@@ -65,13 +65,13 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
   parser.add_argument(
     '--provider',
     required=True,
-    choices=['kokoro', 'pocket', 'cosyvoice'],
+    choices=ENGINE_NAMES,
     help='Primary TTS engine',
   )
   parser.add_argument(
     '--fallback',
     default='none',
-    choices=['none', 'kokoro', 'pocket', 'cosyvoice'],
+    choices=('none', *ENGINE_NAMES),
     help='Fallback engine (default: none)',
   )
   parser.add_argument(
@@ -116,6 +116,9 @@ def _set_common_env(args: argparse.Namespace) -> None:
   ).lower()
   os.environ['COSYVOICE_TTS_ENABLED'] = str(
     args.provider == 'cosyvoice' or args.fallback == 'cosyvoice'
+  ).lower()
+  os.environ['TINY_VOCA_TTS_ENABLED'] = str(
+    args.provider == 'tiny-voca' or args.fallback == 'tiny-voca'
   ).lower()
 
   if args.models_dir:
