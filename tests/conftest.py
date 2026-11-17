@@ -21,6 +21,7 @@ _BASE_CONFIG = GatewayConfig(
   kokoro_enabled=True,
   pocket_enabled=False,
   cosyvoice_enabled=False,
+  tiny_voca_enabled=False,
   cosyvoice_base_url='http://127.0.0.1:50000',
   cosyvoice_request_timeout_seconds=30,
   device_mode='cpu',
@@ -48,6 +49,7 @@ class _ConfigOverrides(TypedDict, total=False):
   kokoro_enabled: bool
   pocket_enabled: bool
   cosyvoice_enabled: bool
+  tiny_voca_enabled: bool
   cosyvoice_base_url: str
   cosyvoice_request_timeout_seconds: int
   device_mode: DeviceMode

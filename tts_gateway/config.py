@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 
-EngineName = Literal['kokoro', 'pocket', 'cosyvoice']
+EngineName = Literal['kokoro', 'pocket', 'cosyvoice', 'tiny-voca']
+ENGINE_NAMES: tuple[EngineName, ...] = get_args(EngineName)
 EngineSetting = EngineName | Literal['none']
 OutputFormat = Literal['mp3', 'wav']
 DeviceMode = Literal['auto', 'cuda', 'mps', 'cpu']
@@ -38,6 +39,7 @@ class GatewayConfig:
   pipeline_version: str
   worker_poll_seconds: float
   warmup_on_start: bool
+  tiny_voca_enabled: bool = False
 
 
 def _optional(name: str, default: str) -> str:
@@ -73,15 +75,11 @@ def _parse_engine(
   raw = _optional(name, default).lower()
   if allow_none and raw in {'', 'none', 'off'}:
     return None
-  if raw == 'kokoro':
-    return 'kokoro'
-  if raw == 'pocket':
-    return 'pocket'
-  if raw == 'cosyvoice':
-    return 'cosyvoice'
-  raise ValueError(
-    f'{name} must be one of kokoro, pocket, cosyvoice, none; received: {raw}'
-  )
+  for engine in ENGINE_NAMES:
+    if raw == engine:
+      return engine
+  choices = (*ENGINE_NAMES, 'none') if allow_none else ENGINE_NAMES
+  raise ValueError(f'{name} must be one of {", ".join(choices)}; received: {raw}')
 
 
 def _parse_output_format(name: str, default: OutputFormat) -> OutputFormat:
@@ -138,6 +136,7 @@ def load_config() -> GatewayConfig:
     kokoro_enabled=_parse_bool('KOKORO_TTS_ENABLED', True),
     pocket_enabled=_parse_bool('POCKET_TTS_ENABLED', False),
     cosyvoice_enabled=_parse_bool('COSYVOICE_TTS_ENABLED', False),
+    tiny_voca_enabled=_parse_bool('TINY_VOCA_TTS_ENABLED', False),
     cosyvoice_base_url=_optional('TTS_COSYVOICE_BASE_URL', 'http://127.0.0.1:50000'),
     cosyvoice_request_timeout_seconds=cosyvoice_request_timeout_seconds,
     device_mode=_parse_device_mode('TTS_DEVICE_MODE', 'auto'),

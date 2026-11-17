@@ -12,12 +12,13 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from tts_gateway.config import EngineName, GatewayConfig
+from tts_gateway.config import ENGINE_NAMES, EngineName, GatewayConfig
 from tts_gateway.engines.base import TtsEngine
 from tts_gateway.engines.cosyvoice_sidecar import CosyVoiceSidecarEngine
 from tts_gateway.engines.kokoro_native import KokoroNativeEngine
 from tts_gateway.engines.native_engine import LazyNativeEngine
 from tts_gateway.engines.pocket_native import PocketNativeEngine
+from tts_gateway.engines.tiny_voca_native import TinyVocaNativeEngine
 from tts_gateway.jobs.store import JobRecord, JobStore
 from tts_gateway.render import synthesize_to_disk
 from tts_gateway.types import ArtifactRef, JobView, SynthesisSpec
@@ -92,6 +93,11 @@ class JobRuntime:
         name='cosyvoice',
         enabled=config.cosyvoice_enabled,
         create_native=lambda: CosyVoiceSidecarEngine(config),
+      ),
+      'tiny-voca': _resolve_engine(
+        name='tiny-voca',
+        enabled=config.tiny_voca_enabled,
+        create_native=lambda: TinyVocaNativeEngine(config),
       ),
     }
     chain: list[str] = [config.primary_engine]
@@ -279,7 +285,7 @@ class JobRuntime:
   def engine_info(self) -> dict[str, dict]:
     """Per-engine status for /health reporting."""
     info: dict[str, dict] = {}
-    for name in ('kokoro', 'pocket', 'cosyvoice'):
+    for name in ENGINE_NAMES:
       engine = self._engine_map.get(name)
       if engine is None:
         info[name] = {'mode': 'disabled'}

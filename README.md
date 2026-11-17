@@ -2,7 +2,7 @@
 
 A local text-to-speech gateway with a pluggable engine architecture. New open-source voice models ship constantly; tts-gateway gives clients a stable HTTP API with canonical `POST /v1/speech` and `POST /v1/jobs` endpoints, while retaining legacy `/tts` compatibility shims so swapping or adding models means implementing a small engine class, not rewiring your workflow.
 
-Currently supports [Kokoro](https://github.com/hexgrad/kokoro) and [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) as native in-process engines, plus [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) via an optional HTTP sidecar. See [goals/tts-streaming-latency/cosyvoice-sidecar.md](goals/tts-streaming-latency/cosyvoice-sidecar.md) for the sidecar contract and env vars.
+Currently supports [Kokoro](https://github.com/hexgrad/kokoro), [Pocket TTS](https://github.com/kyutai-labs/pocket-tts), and [Tiny Voca](https://github.com/n4ze3m/tiny-voca) as native in-process engines, plus [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) via an optional HTTP sidecar. See [goals/tts-streaming-latency/cosyvoice-sidecar.md](goals/tts-streaming-latency/cosyvoice-sidecar.md) for the sidecar contract and env vars.
 
 ## Install
 
@@ -15,7 +15,7 @@ uv tool install tts-gateway[kokoro]
 # With Pocket TTS support
 uv tool install tts-gateway[pocket]
 
-# Both engines
+# All native engine extras (Tiny Voca also needs Dizione, see below)
 uv tool install tts-gateway[all]
 ```
 
@@ -34,6 +34,33 @@ uv tool install tts-gateway[kokoro] \
 
 Development checkouts get the model automatically from the dev dependency group via `uv sync --group dev --extra kokoro`.
 
+### Tiny Voca (CPU)
+
+Tiny Voca uses ONNX Runtime and the [Dizione](https://github.com/n4ze3m/dizione)
+phonemizer. It speaks American English in `F2` (default) or `M2` and produces
+24 kHz mono audio. The first warmup fetches about 27 MB of model and phonemizer
+files from [Hugging Face](https://huggingface.co/n4ze3m/tiny-voca) into
+`TTS_MODELS_DIR`. Later starts can use those files offline. The gateway streams
+completed audio chunks while the model synthesizes each utterance in one call.
+
+Try it from this checkout:
+
+```bash
+uv run --extra tiny-voca \
+  --with 'git+https://github.com/n4ze3m/dizione@8cd889e4de7be6bd1dd2e6891344a0729fa14dd4' \
+  tts serve --provider tiny-voca --format wav
+```
+
+In another terminal:
+
+```bash
+curl -fsS http://127.0.0.1:45123/v1/speech \
+  -F 'text=Hello from Tiny Voca.' -F 'voice=M2' -o hello.wav
+```
+
+To install the published tool with Tiny Voca support, pass the same pinned
+Dizione URL to `uv tool install 'tts-gateway[tiny-voca]' --with ...`.
+
 For local development, see [Development](#development) below.
 
 ## Docker
@@ -48,7 +75,7 @@ docker run --rm -p 8080:8080 \
   ghcr.io/abpai/tts-gateway:latest
 ```
 
-The published image installs both native engine stacks and the Kokoro spaCy
+The published image installs Kokoro, Pocket TTS, and the Kokoro spaCy
 model. By default it does not bake model weights into the image, so the first
 `/warmup` or `/tts` request may still download engine weights unless you build a
 preloaded image yourself.
@@ -284,8 +311,8 @@ All settings can be controlled via environment variables. CLI flags take precede
 
 | Variable                      | Default                       | Description                                    |
 | ----------------------------- | ----------------------------- | ---------------------------------------------- |
-| `TTS_PRIMARY_ENGINE`          | `kokoro`                      | Primary engine: `kokoro`, `pocket`, or `cosyvoice` |
-| `TTS_FALLBACK_ENGINE`         | `none`                        | Fallback engine: `kokoro`, `pocket`, `cosyvoice`, or `none` |
+| `TTS_PRIMARY_ENGINE`          | `kokoro`                      | Primary engine: `kokoro`, `pocket`, `cosyvoice`, or `tiny-voca` |
+| `TTS_FALLBACK_ENGINE`         | `none`                        | Fallback engine: `kokoro`, `pocket`, `cosyvoice`, `tiny-voca`, or `none` |
 | `TTS_OUTPUT_FORMAT`           | `mp3`                         | Output audio format: `wav` or `mp3`            |
 | `TTS_DEVICE_MODE`             | `auto`                        | Torch device: `auto`, `cpu`, `mps`, `cuda`; Kokoro `auto` prefers CUDA then CPU, while `mps` remains opt-in |
 | `TTS_DEFAULT_VOICE`           | _(none)_                      | Default voice name                             |
@@ -304,6 +331,7 @@ All settings can be controlled via environment variables. CLI flags take precede
 | `TTS_WARMUP_ON_START`         | `true`                        | Start a non-blocking `/warmup` task during app startup |
 | `KOKORO_TTS_ENABLED`          | `true`                        | Enable/disable Kokoro engine                   |
 | `POCKET_TTS_ENABLED`          | `false`                       | Enable/disable Pocket TTS engine               |
+| `TINY_VOCA_TTS_ENABLED`       | `false`                       | Enable/disable Tiny Voca engine                |
 | `COSYVOICE_TTS_ENABLED`       | `false`                       | Enable/disable CosyVoice sidecar engine        |
 | `TTS_COSYVOICE_BASE_URL`      | `http://127.0.0.1:50000`      | CosyVoice sidecar base URL                     |
 | `TTS_COSYVOICE_REQUEST_TIMEOUT_SECONDS` | _(engine timeout)_  | CosyVoice sidecar request timeout              |

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import _make_config
+from tts_gateway.cli import _set_common_env, build_parser
 from tts_gateway.main import create_app
 from tts_gateway.speech_cli import HealthReport
 from tts_gateway.version import package_version
@@ -33,6 +37,36 @@ def test_health_ok_false_when_no_engines_available() -> None:
 
   assert response.status_code == 200
   assert response.json()['ok'] is False
+  assert response.json()['engines']['tiny-voca']['mode'] == 'disabled'
+
+
+@pytest.mark.parametrize(
+  'argv,chain',
+  [
+    (['serve', '--provider', 'tiny-voca'], ['tiny-voca']),
+    (['worker', '--provider', 'tiny-voca'], ['tiny-voca']),
+    (
+      ['serve', '--provider', 'kokoro', '--fallback', 'tiny-voca'],
+      ['kokoro', 'tiny-voca'],
+    ),
+  ],
+)
+def test_health_reports_cli_configured_tiny_voca(
+  tmp_path: Path, argv: list[str], chain: list[str]
+) -> None:
+  args = build_parser().parse_args(argv)
+  env = {'TTS_DATA_DIR': str(tmp_path), 'TTS_WARMUP_ON_START': 'false'}
+  with patch.dict('os.environ', env, clear=True):
+    _set_common_env(args)
+    with TestClient(create_app()) as client:
+      response = client.get('/health')
+
+  assert response.status_code == 200
+  report = HealthReport.model_validate(response.json())
+  assert report.ok
+  assert report.engine_chain == chain
+  assert report.engines['tiny-voca']['mode'] == 'native'
+  assert report.engines['tiny-voca']['loaded'] is False
 
 
 def test_health_ok_true_when_an_engine_is_available() -> None:
